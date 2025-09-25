@@ -14,11 +14,18 @@ try:
     from .extract_claude_logs import ClaudeConversationExtractor
     from .realtime_search import RealTimeSearch, create_smart_searcher
     from .search_conversations import ConversationSearcher
+    from .interactive_search import EnhancedSearch
 except ImportError:
     # Fallback for direct execution or when not installed as package
     from extract_claude_logs import ClaudeConversationExtractor
     from realtime_search import RealTimeSearch, create_smart_searcher
     from search_conversations import ConversationSearcher
+
+    try:
+        from interactive_search import EnhancedSearch
+    except ImportError:
+        # EnhancedSearch may not be available in older installations
+        EnhancedSearch = None
 
 
 class InteractiveUI:
@@ -177,32 +184,49 @@ class InteractiveUI:
         print(f"\r[{bar}] {current}/{total} {message}", end="", flush=True)
 
     def search_conversations(self) -> List[int]:
-        """Launch real-time search interface"""
-        # Enhance searcher with smart search
-        smart_searcher = create_smart_searcher(self.searcher)
+        """Launch enhanced search interface with full interactive experience"""
+        # Use EnhancedSearch if available, otherwise fall back to RealTimeSearch
+        if EnhancedSearch:
+            # Use the new enhanced search system
+            enhanced = EnhancedSearch(self.searcher, self.extractor)
+            selected_file = enhanced.run()
 
-        # Create and run real-time search
-        rts = RealTimeSearch(smart_searcher, self.extractor)
-        selected_file = rts.run()
-
-        if selected_file:
-            # View the selected conversation
-            self.extractor.display_conversation(Path(selected_file))
-
-            # Ask if user wants to extract it
-            extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
-            if extract_choice == "y":
+            # The EnhancedSearch handles all interaction internally
+            # It returns the selected file if the user extracted it
+            if selected_file:
                 try:
                     index = self.sessions.index(Path(selected_file))
                     return [index]
                 except ValueError:
-                    print("\n❌ Error: Selected file not found in sessions list")
-                    input("\nPress Enter to continue...")
-
-            # Return empty to go back to menu
+                    # File may have been viewed but not extracted
+                    pass
             return []
+        else:
+            # Fall back to basic real-time search
+            smart_searcher = create_smart_searcher(self.searcher)
+            rts = RealTimeSearch(smart_searcher, self.extractor)
+            selected_file = rts.run()
 
-        return []
+            if selected_file:
+                # View the selected conversation
+                self.extractor.display_conversation(Path(selected_file))
+
+                # Ask if user wants to extract it
+                extract_choice = (
+                    input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                )
+                if extract_choice == "y":
+                    try:
+                        index = self.sessions.index(Path(selected_file))
+                        return [index]
+                    except ValueError:
+                        print("\n❌ Error: Selected file not found in sessions list")
+                        input("\nPress Enter to continue...")
+
+                # Return empty to go back to menu
+                return []
+
+            return []
 
     def extract_conversations(self, indices: List[int], output_dir: Path) -> int:
         """Extract selected conversations with progress display"""
@@ -212,9 +236,13 @@ class InteractiveUI:
         self.extractor.output_dir = output_dir
 
         # Use the extractor's method
-        success_count, total_count = self.extractor.extract_multiple(self.sessions, indices)
+        success_count, total_count = self.extractor.extract_multiple(
+            self.sessions, indices
+        )
 
-        print(f"\n\n✅ Successfully extracted {success_count}/{total_count} conversations!")
+        print(
+            f"\n\n✅ Successfully extracted {success_count}/{total_count} conversations!"
+        )
         return success_count
 
     def open_folder(self, path: Path):

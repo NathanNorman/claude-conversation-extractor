@@ -100,12 +100,18 @@ def main():
 
                         # After viewing, offer to extract
                         extract_choice = (
-                            input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                            input("\n📤 Extract this conversation? (y/N): ")
+                            .strip()
+                            .lower()
                         )
                         if extract_choice == "y":
-                            conversation = extractor.extract_conversation(session_paths[0])
+                            conversation = extractor.extract_conversation(
+                                session_paths[0]
+                            )
                             if conversation:
-                                output = extractor.save_as_markdown(conversation, sessions[0][1])
+                                output = extractor.save_as_markdown(
+                                    conversation, sessions[0][1]
+                                )
                                 print(f"✅ Saved: {output.name}")
                     else:
                         # Multiple results, let user choose
@@ -114,13 +120,19 @@ def main():
                             print(f"  {i}. {sid[:8]}...")
 
                         try:
-                            view_num = int(input("\nEnter number (1-{}): ".format(len(sessions))))
+                            view_num = int(
+                                input("\nEnter number (1-{}): ".format(len(sessions)))
+                            )
                             if 1 <= view_num <= len(session_paths):
-                                extractor.display_conversation(session_paths[view_num - 1])
+                                extractor.display_conversation(
+                                    session_paths[view_num - 1]
+                                )
 
                                 # After viewing, offer to extract
                                 extract_choice = (
-                                    input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                                    input("\n📤 Extract this conversation? (y/N): ")
+                                    .strip()
+                                    .lower()
                                 )
                                 if extract_choice == "y":
                                     conversation = extractor.extract_conversation(

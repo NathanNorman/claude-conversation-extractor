@@ -103,7 +103,9 @@ class ClaudeConversationExtractor:
                             msg = entry["message"]
                             if isinstance(msg, dict) and msg.get("role") == "assistant":
                                 content = msg.get("content", [])
-                                text = self._extract_text_content(content, detailed=detailed)
+                                text = self._extract_text_content(
+                                    content, detailed=detailed
+                                )
 
                                 if text and text.strip():
                                     conversation.append(
@@ -132,7 +134,9 @@ class ClaudeConversationExtractor:
                             # Extract tool results
                             elif entry.get("type") == "tool_result":
                                 result = entry.get("result", {})
-                                output = result.get("output", "") or result.get("error", "")
+                                output = result.get("output", "") or result.get(
+                                    "error", ""
+                                )
                                 conversation.append(
                                     {
                                         "role": "tool_result",
@@ -185,7 +189,9 @@ class ClaudeConversationExtractor:
                         tool_name = item.get("name", "unknown")
                         tool_input = item.get("input", {})
                         text_parts.append(f"\n🔧 Using tool: {tool_name}")
-                        text_parts.append(f"Input: {json.dumps(tool_input, indent=2)}\n")
+                        text_parts.append(
+                            f"Input: {json.dumps(tool_input, indent=2)}\n"
+                        )
             return "\n".join(text_parts)
         else:
             return str(content)
@@ -265,7 +271,9 @@ class ClaudeConversationExtractor:
 
                     # Check if we need to paginate
                     if lines_shown >= lines_per_page:
-                        response = input("\n[Enter] Continue • [Q] Quit: ").strip().upper()
+                        response = (
+                            input("\n[Enter] Continue • [Q] Quit: ").strip().upper()
+                        )
                         if response == "Q":
                             print("\n👋 Stopped viewing")
                             return
@@ -274,7 +282,9 @@ class ClaudeConversationExtractor:
                         lines_shown = 0
 
                 if len(lines) > max_lines_per_msg:
-                    print(f"... [{len(lines) - max_lines_per_msg} more lines truncated]")
+                    print(
+                        f"... [{len(lines) - max_lines_per_msg} more lines truncated]"
+                    )
                     lines_shown += 1
 
             print("\n" + "=" * 60)
@@ -345,7 +355,9 @@ class ClaudeConversationExtractor:
 
         return output_path
 
-    def save_as_json(self, conversation: List[Dict[str, str]], session_id: str) -> Optional[Path]:
+    def save_as_json(
+        self, conversation: List[Dict[str, str]], session_id: str
+    ) -> Optional[Path]:
         """Save conversation as JSON file."""
         if not conversation:
             return None
@@ -377,7 +389,9 @@ class ClaudeConversationExtractor:
 
         return output_path
 
-    def save_as_html(self, conversation: List[Dict[str, str]], session_id: str) -> Optional[Path]:
+    def save_as_html(
+        self, conversation: List[Dict[str, str]], session_id: str
+    ) -> Optional[Path]:
         """Save conversation as HTML file with syntax highlighting."""
         if not conversation:
             return None
@@ -579,13 +593,18 @@ class ClaudeConversationExtractor:
                                                     continue
 
                                                 # Skip Claude's session continuation messages
-                                                if "session is being continued" in text.lower():
+                                                if (
+                                                    "session is being continued"
+                                                    in text.lower()
+                                                ):
                                                     continue
 
                                                 # Remove XML-like tags (command messages, etc)
                                                 import re
 
-                                                text = re.sub(r"<[^>]+>", "", text).strip()
+                                                text = re.sub(
+                                                    r"<[^>]+>", "", text
+                                                ).strip()
 
                                                 # Skip command outputs
                                                 if "is running" in text and "…" in text:
@@ -601,7 +620,9 @@ class ClaudeConversationExtractor:
                                                 if (
                                                     text and len(text) > 3
                                                 ):  # Lower threshold to catch "hello"
-                                                    first_user_msg = text[:100].replace("\n", " ")
+                                                    first_user_msg = text[:100].replace(
+                                                        "\n", " "
+                                                    )
                                                     break
 
                                     # Handle string content (less common but possible)
@@ -611,14 +632,19 @@ class ClaudeConversationExtractor:
                                         content = content.strip()
 
                                         # Remove XML-like tags
-                                        content = re.sub(r"<[^>]+>", "", content).strip()
+                                        content = re.sub(
+                                            r"<[^>]+>", "", content
+                                        ).strip()
 
                                         # Skip command outputs
                                         if "is running" in content and "…" in content:
                                             continue
 
                                         # Skip Claude's session continuation messages
-                                        if "session is being continued" in content.lower():
+                                        if (
+                                            "session is being continued"
+                                            in content.lower()
+                                        ):
                                             continue
 
                                         # Skip tool results and interruptions
@@ -629,7 +655,9 @@ class ClaudeConversationExtractor:
                                             if (
                                                 content and len(content) > 3
                                             ):  # Lower threshold to catch short messages
-                                                first_user_msg = content[:100].replace("\n", " ")
+                                                first_user_msg = content[:100].replace(
+                                                    "\n", " "
+                                                )
                         except json.JSONDecodeError:
                             continue
 
@@ -656,7 +684,9 @@ class ClaudeConversationExtractor:
             project = session.parent.name.replace("-", " ").strip()
             if project.startswith("Users"):
                 project = (
-                    "~/" + "/".join(project.split()[2:]) if len(project.split()) > 2 else "Home"
+                    "~/" + "/".join(project.split()[2:])
+                    if len(project.split()) > 2
+                    else "Home"
                 )
 
             session_id = session.stem
@@ -701,14 +731,19 @@ class ClaudeConversationExtractor:
         for idx in indices:
             if 0 <= idx < len(sessions):
                 session_path = sessions[idx]
-                conversation = self.extract_conversation(session_path, detailed=detailed)
+                conversation = self.extract_conversation(
+                    session_path, detailed=detailed
+                )
                 if conversation:
                     output_path = self.save_conversation(
                         conversation, session_path.stem, format=format
                     )
                     success += 1
                     msg_count = len(conversation)
-                    print(f"✅ {success}/{total}: {output_path.name} " f"({msg_count} messages)")
+                    print(
+                        f"✅ {success}/{total}: {output_path.name} "
+                        f"({msg_count} messages)"
+                    )
                 else:
                     print(f"⏭️  Skipped session {idx + 1} (no conversation)")
             else:
@@ -742,9 +777,15 @@ Examples:
         type=str,
         help="Extract specific session(s) by number (comma-separated)",
     )
-    parser.add_argument("--all", "--logs", action="store_true", help="Extract all sessions")
-    parser.add_argument("--recent", type=int, help="Extract N most recent sessions", default=0)
-    parser.add_argument("--output", type=str, help="Output directory for markdown files")
+    parser.add_argument(
+        "--all", "--logs", action="store_true", help="Extract all sessions"
+    )
+    parser.add_argument(
+        "--recent", type=int, help="Extract N most recent sessions", default=0
+    )
+    parser.add_argument(
+        "--output", type=str, help="Output directory for markdown files"
+    )
     parser.add_argument(
         "--limit",
         type=int,
@@ -766,17 +807,27 @@ Examples:
     )
 
     # Search arguments
-    parser.add_argument("--search", type=str, help="Search conversations for text (smart search)")
-    parser.add_argument("--search-regex", type=str, help="Search conversations using regex pattern")
-    parser.add_argument("--search-date-from", type=str, help="Filter search from date (YYYY-MM-DD)")
-    parser.add_argument("--search-date-to", type=str, help="Filter search to date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--search", type=str, help="Search conversations for text (smart search)"
+    )
+    parser.add_argument(
+        "--search-regex", type=str, help="Search conversations using regex pattern"
+    )
+    parser.add_argument(
+        "--search-date-from", type=str, help="Filter search from date (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--search-date-to", type=str, help="Filter search to date (YYYY-MM-DD)"
+    )
     parser.add_argument(
         "--search-speaker",
         choices=["human", "assistant", "both"],
         default="both",
         help="Filter search by speaker",
     )
-    parser.add_argument("--case-sensitive", action="store_true", help="Make search case-sensitive")
+    parser.add_argument(
+        "--case-sensitive", action="store_true", help="Make search case-sensitive"
+    )
 
     # Export format arguments
     parser.add_argument(
@@ -889,11 +940,15 @@ Examples:
                     view_num = int(view_choice)
                     if 1 <= view_num <= len(file_paths_list):
                         selected_path = file_paths_list[view_num - 1]
-                        extractor.display_conversation(selected_path, detailed=args.detailed)
+                        extractor.display_conversation(
+                            selected_path, detailed=args.detailed
+                        )
 
                         # Offer to extract after viewing
                         extract_choice = (
-                            input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                            input("\n📤 Extract this conversation? (y/N): ")
+                            .strip()
+                            .lower()
                         )
                         if extract_choice == "y":
                             conversation = extractor.extract_conversation(
@@ -902,11 +957,17 @@ Examples:
                             if conversation:
                                 session_id = selected_path.stem
                                 if args.format == "json":
-                                    output = extractor.save_as_json(conversation, session_id)
+                                    output = extractor.save_as_json(
+                                        conversation, session_id
+                                    )
                                 elif args.format == "html":
-                                    output = extractor.save_as_html(conversation, session_id)
+                                    output = extractor.save_as_html(
+                                        conversation, session_id
+                                    )
                                 else:
-                                    output = extractor.save_as_markdown(conversation, session_id)
+                                    output = extractor.save_as_markdown(
+                                        conversation, session_id
+                                    )
                                 print(f"✅ Saved: {output.name}")
             except (EOFError, KeyboardInterrupt):
                 print("\n👋 Cancelled")
@@ -943,7 +1004,9 @@ Examples:
                 continue
 
         if indices:
-            print(f"\n📤 Extracting {len(indices)} session(s) as {args.format.upper()}...")
+            print(
+                f"\n📤 Extracting {len(indices)} session(s) as {args.format.upper()}..."
+            )
             if args.detailed:
                 print("📋 Including detailed tool use and system messages")
             success, total = extractor.extract_multiple(
@@ -954,7 +1017,9 @@ Examples:
     elif args.recent:
         sessions = extractor.find_sessions()
         limit = min(args.recent, len(sessions))
-        print(f"\n📤 Extracting {limit} most recent sessions as {args.format.upper()}...")
+        print(
+            f"\n📤 Extracting {limit} most recent sessions as {args.format.upper()}..."
+        )
         if args.detailed:
             print("📋 Including detailed tool use and system messages")
 
@@ -966,7 +1031,9 @@ Examples:
 
     elif args.all:
         sessions = extractor.find_sessions()
-        print(f"\n📤 Extracting all {len(sessions)} sessions as {args.format.upper()}...")
+        print(
+            f"\n📤 Extracting all {len(sessions)} sessions as {args.format.upper()}..."
+        )
         if args.detailed:
             print("📋 Including detailed tool use and system messages")
 
@@ -1013,7 +1080,9 @@ def launch_interactive():
 
             # Offer to extract
             try:
-                extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                extract_choice = (
+                    input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                )
                 if extract_choice == "y":
                     conversation = extractor.extract_conversation(selected_file)
                     if conversation:
