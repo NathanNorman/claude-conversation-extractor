@@ -17,12 +17,12 @@ class PostInstallCommand(install):
         # Print helpful messages after installation
         def print_success_message():
             print("\n🎉 Installation complete!")
-            print("\n📋 Quick Start Commands:")
-            print(
-                "  claude-start         # Interactive UI with logo & real-time search"
-            )
-            print("  claude-extract       # CLI for extraction & searching")
-            print("  claude-search        # Search and view conversations")
+            print("\n📋 Quick Start:")
+            print("  claude-logs          # Launch interactive UI with enhanced search")
+            print("\n💡 Usage:")
+            print("  1. Run 'claude-logs'")
+            print("  2. Choose output folder")
+            print("  3. Press 'F' for enhanced search with live results!")
             print("\n⭐ If you find this tool helpful, please star us on GitHub:")
             print("   https://github.com/ZeroSumQuant/claude-conversation-extractor")
             print("\nThank you for using Claude Conversation Extractor! 🚀\n")
@@ -86,10 +86,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "claude-extract=extract_claude_logs:launch_interactive",  # Primary command
-            "claude-logs=extract_claude_logs:launch_interactive",  # Kept for backward compatibility
-            "claude-start=extract_claude_logs:launch_interactive",  # Alternative alias
-            "claude-search=search_cli:main",  # Direct search command
+            "claude-logs=extract_claude_logs:launch_interactive",  # Single primary command
         ],
     },
     cmdclass={
