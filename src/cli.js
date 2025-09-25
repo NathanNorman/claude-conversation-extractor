@@ -322,6 +322,85 @@ async function showLiveSearch() {
   });
 }
 
+async function exportConversation(conversation) {
+  try {
+    // Choose export location
+    const { exportLocation } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'exportLocation',
+        message: 'Where would you like to export the conversation?',
+        choices: [
+          { name: `📁 ~/.claude/claude_conversations/`, value: join(homedir(), '.claude', 'claude_conversations') },
+          { name: `📁 ~/Desktop/claude_conversations/`, value: join(homedir(), 'Desktop', 'claude_conversations') },
+          { name: `📁 Current directory`, value: process.cwd() },
+          { name: `📁 Custom location`, value: 'custom' }
+        ]
+      }
+    ]);
+    
+    let outputDir = exportLocation;
+    if (exportLocation === 'custom') {
+      const { customPath } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customPath',
+          message: 'Enter custom export path:',
+          validate: (input) => input.trim().length > 0 || 'Please enter a valid path'
+        }
+      ]);
+      outputDir = customPath.replace('~', homedir());
+    }
+    
+    // Create directory if it doesn't exist
+    await require('fs').promises.mkdir(outputDir, { recursive: true });
+    
+    // Read and convert conversation
+    const content = await readFile(conversation.path, 'utf-8');
+    const lines = content.split('\n').filter(line => line.trim());
+    
+    let markdown = `# Claude Conversation\n\n`;
+    markdown += `**Project:** ${conversation.project}\n`;
+    markdown += `**Date:** ${conversation.modified.toLocaleString()}\n`;
+    markdown += `**File:** ${conversation.name}\n\n`;
+    markdown += `---\n\n`;
+    
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.content && typeof parsed.content === 'string') {
+          const speaker = parsed.speaker || 'unknown';
+          const messageContent = parsed.content;
+          
+          if (speaker === 'human') {
+            markdown += `## 👤 Human\n\n${messageContent}\n\n`;
+          } else if (speaker === 'assistant') {
+            markdown += `## 🤖 Assistant\n\n${messageContent}\n\n`;
+          } else {
+            markdown += `## ${speaker}\n\n${messageContent}\n\n`;
+          }
+        }
+      } catch {
+        // Skip invalid JSON lines
+      }
+    }
+    
+    // Save the file
+    const fileName = `${conversation.project}_${conversation.modified.toISOString().slice(0, 10)}.md`;
+    const outputPath = join(outputDir, fileName);
+    await require('fs').promises.writeFile(outputPath, markdown);
+    
+    console.log(colors.success(`\n📤 Conversation exported successfully!`));
+    console.log(colors.highlight(`📄 File: ${outputPath}`));
+    console.log(colors.dim(`📊 Size: ${(markdown.length / 1024).toFixed(1)} KB`));
+    
+  } catch (error) {
+    console.log(colors.error(`❌ Export failed: ${error.message}`));
+  }
+  
+  await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+}
+
 async function showConversationActions(conversation) {
   console.clear();
   
@@ -337,6 +416,7 @@ async function showConversationActions(conversation) {
       name: 'action',
       message: 'What would you like to do?',
       choices: [
+        { name: '📤 Export to markdown', value: 'export' },
         { name: '📋 Copy file path', value: 'copy' },
         { name: '📂 Show file location', value: 'location' },
         { name: '📝 Create Claude Code context', value: 'context' },
@@ -348,6 +428,11 @@ async function showConversationActions(conversation) {
   ]);
   
   switch (action) {
+    case 'export':
+      await exportConversation(conversation);
+      await showConversationActions(conversation);
+      break;
+      
     case 'copy':
       console.log(colors.success(`\n📋 File path:\n${colors.highlight(conversation.path)}`));
       await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
