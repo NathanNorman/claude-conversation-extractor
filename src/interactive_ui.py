@@ -158,7 +158,9 @@ class InteractiveUI:
             return Path(custom_path).expanduser()
         return None
 
-    def _show_interactive_menu(self, menu_options: List[tuple], is_folder_menu: bool = False):
+    def _show_interactive_menu(
+        self, menu_options: List[tuple], is_folder_menu: bool = False
+    ):
         """Display interactive menu with arrow key navigation"""
         try:
             # Test if we can import terminal modules (Unix-like systems)
@@ -220,7 +222,9 @@ class InteractiveUI:
                     modified = datetime.fromtimestamp(session_path.stat().st_mtime)
                     size_kb = session_path.stat().st_size / 1024
                     date_str = modified.strftime("%Y-%m-%d %H:%M")
-                    print(f"  {i:2d}. [{date_str}] {project[:30]:<30} ({size_kb:.1f} KB)")
+                    print(
+                        f"  {i:2d}. [{date_str}] {project[:30]:<30} ({size_kb:.1f} KB)"
+                    )
 
                 if len(self.sessions) > 20:
                     print(f"\n  ... and {len(self.sessions) - 20} more conversations")
@@ -293,32 +297,8 @@ class InteractiveUI:
     def search_conversations(self) -> List[int]:
         """Launch enhanced search interface with full interactive experience"""
         # Use EnhancedSearch if available, otherwise fall back to RealTimeSearch
-        if EnhancedSearch:
-            # Use the new enhanced search system
-            enhanced = EnhancedSearch(self.searcher, self.extractor)
-            selected_file = enhanced.run()
-
-            print(f"🔍 Enhanced search completed. Selected file: {selected_file}")
-
-            # The EnhancedSearch handles all interaction internally
-            # If they used the search and didn't select anything, go back to menu
-            if selected_file is None:
-                print("🔄 No file selected, returning to menu...")
-                # Return a special marker to indicate "return to menu" instead of quit
-                return [-1]  # Special marker to go back to sessions menu
-
-            # If they selected a file, try to find its index
-            if selected_file:
-                try:
-                    index = self.sessions.index(Path(selected_file))
-                    print(f"✅ Found session at index {index}")
-                    return [index]
-                except ValueError:
-                    print("⚠️  File selected but not in sessions list")
-                    return [-1]  # Return to menu
-
-            return [-1]  # Return to menu
-        else:
+        # Use the simple RealTimeSearch - just like vibe-log (skip the complex enhanced search)
+        if True:  # Always use simple search for now
             # Fall back to basic real-time search
             smart_searcher = create_smart_searcher(self.searcher)
             rts = RealTimeSearch(smart_searcher, self.extractor)
@@ -329,7 +309,9 @@ class InteractiveUI:
                 self.extractor.display_conversation(Path(selected_file))
 
                 # Ask if user wants to extract it
-                extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                extract_choice = (
+                    input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+                )
                 if extract_choice == "y":
                     try:
                         index = self.sessions.index(Path(selected_file))
@@ -351,9 +333,13 @@ class InteractiveUI:
         self.extractor.output_dir = output_dir
 
         # Use the extractor's method
-        success_count, total_count = self.extractor.extract_multiple(self.sessions, indices)
+        success_count, total_count = self.extractor.extract_multiple(
+            self.sessions, indices
+        )
 
-        print(f"\n\n✅ Successfully extracted {success_count}/{total_count} conversations!")
+        print(
+            f"\n\n✅ Successfully extracted {success_count}/{total_count} conversations!"
+        )
         return success_count
 
     def open_folder(self, path: Path):

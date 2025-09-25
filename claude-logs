@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Find the script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if Node.js is available
+if command -v node >/dev/null 2>&1; then
+    # Use the Node.js version with inquirer (vibe-log style)
+    exec node "$SCRIPT_DIR/src/cli.js" "$@"
+else
+    # Fallback to Python version
+    exec python3 -m src.interactive_ui "$@"
+fi

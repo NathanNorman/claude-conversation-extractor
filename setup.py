@@ -84,9 +84,10 @@ setup(
         "realtime_search",
         "search_cli",
     ],
+    scripts=["claude-logs"],  # Use the shell script
     entry_points={
         "console_scripts": [
-            "claude-logs=extract_claude_logs:launch_interactive",  # Single primary command
+            "claude-logs-py=extract_claude_logs:launch_interactive",  # Python fallback
         ],
     },
     cmdclass={

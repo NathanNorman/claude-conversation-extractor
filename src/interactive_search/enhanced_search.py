@@ -350,12 +350,17 @@ class EnhancedSearch:
 
     def run(self) -> Optional[Path]:
         """Run the enhanced search interface"""
+        print("🚀 Enhanced search starting...")
+
         # Start search worker thread
         self.search_thread = threading.Thread(target=self.search_worker, daemon=True)
         self.search_thread.start()
+        print("🧵 Search worker thread started")
 
         try:
+            print("⌨️  Initializing keyboard handler...")
             with KeyboardHandler() as keyboard:
+                print("✅ Keyboard handler initialized, entering main loop")
                 while True:
                     # Draw based on current view
                     if self.nav_state.current_view == "search":
