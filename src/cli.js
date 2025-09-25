@@ -101,13 +101,23 @@ class ClaudeConversationExtractor {
               if (messageContent.toLowerCase().includes(queryLower)) {
                 matchCount++;
                 if (previews.length < 1) {
-                  // Find sentence with match
+                  // Find larger context around the match
                   const words = messageContent.split(' ');
                   const matchIndex = words.findIndex(word => word.toLowerCase().includes(queryLower));
                   if (matchIndex >= 0) {
-                    const start = Math.max(0, matchIndex - 8);
-                    const end = Math.min(words.length, matchIndex + 12);
-                    previews.push(words.slice(start, end).join(' '));
+                    const start = Math.max(0, matchIndex - 15);
+                    const end = Math.min(words.length, matchIndex + 20);
+                    const contextWords = words.slice(start, end);
+                    
+                    // Highlight the matching word
+                    const highlightedContext = contextWords.map(word => {
+                      if (word.toLowerCase().includes(queryLower)) {
+                        return chalk.yellow.bold(word);
+                      }
+                      return word;
+                    }).join(' ');
+                    
+                    previews.push(highlightedContext);
                   }
                 }
               }
@@ -205,7 +215,25 @@ async function showLiveSearch() {
             console.log(resultLine);
             
             if (isSelected && result.preview) {
-              console.log(colors.subdued(`    ${result.preview.slice(0, 80)}...`));
+              // Show more context for selected item with word wrapping
+              const preview = result.preview;
+              const maxWidth = 90;
+              const words = preview.split(' ');
+              let currentLine = '';
+              
+              console.log(colors.subdued('    ┌─ Context:'));
+              for (const word of words) {
+                if ((currentLine + word).length > maxWidth) {
+                  console.log(colors.subdued(`    │ ${currentLine.trim()}`));
+                  currentLine = word + ' ';
+                } else {
+                  currentLine += word + ' ';
+                }
+              }
+              if (currentLine.trim()) {
+                console.log(colors.subdued(`    │ ${currentLine.trim()}`));
+              }
+              console.log(colors.subdued('    └─'));
             }
           });
           
