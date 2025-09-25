@@ -71,3 +71,5 @@ test-output/
 # Local testing
 test_conversations/
 local_tests/
+# Node.js dependencies
+node_modules/
