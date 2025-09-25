@@ -138,41 +138,20 @@ class InteractiveUI:
         if len(self.sessions) > 20:
             print(f"\n  ... and {len(self.sessions) - 20} more conversations")
 
-        print("\n" + "=" * 60)
-        print("\nOptions:")
-        print("  A. Extract ALL conversations")
-        print("  R. Extract 5 most RECENT")
-        print("  S. SELECT specific conversations (e.g., 1,3,5)")
-        print("  F. SEARCH conversations (real-time search)")
-        print("  Q. QUIT")
+        # Interactive menu with arrow key navigation
+        menu_options = [
+            ("Extract ALL conversations", "A", lambda: list(range(len(self.sessions)))),
+            (
+                "Extract 5 most RECENT",
+                "R",
+                lambda: list(range(min(5, len(self.sessions)))),
+            ),
+            ("SELECT specific conversations", "S", self._handle_select_specific),
+            ("SEARCH conversations (enhanced search)", "F", self._handle_search),
+            ("QUIT", "Q", lambda: []),
+        ]
 
-        while True:
-            choice = input("\nYour choice: ").strip().upper()
-
-            if choice == "Q":
-                return []
-            elif choice == "A":
-                return list(range(len(self.sessions)))
-            elif choice == "R":
-                return list(range(min(5, len(self.sessions))))
-            elif choice == "S":
-                selection = input("Enter conversation numbers (e.g., 1,3,5): ").strip()
-                try:
-                    indices = [int(x.strip()) - 1 for x in selection.split(",")]
-                    # Validate indices
-                    if all(0 <= i < len(self.sessions) for i in indices):
-                        return indices
-                    else:
-                        print("❌ Invalid selection. Please use valid numbers.")
-                except ValueError:
-                    print("❌ Invalid format. Use comma-separated numbers.")
-            elif choice == "F":
-                # Search functionality
-                search_results = self.search_conversations()
-                if search_results:
-                    return search_results
-            else:
-                print("❌ Invalid choice. Please try again.")
+        return self._show_interactive_menu(menu_options)
 
     def show_progress(self, current: int, total: int, message: str = ""):
         """Display a simple progress bar"""
@@ -182,6 +161,114 @@ class InteractiveUI:
         bar = "█" * filled + "░" * (bar_width - filled)
 
         print(f"\r[{bar}] {current}/{total} {message}", end="", flush=True)
+
+    def _show_interactive_menu(self, menu_options: List[tuple]) -> List[int]:
+        """Display interactive menu with arrow key navigation"""
+        try:
+            # Test if we can import terminal modules (Unix-like systems)
+            import termios  # noqa: F401
+            import tty  # noqa: F401
+        except ImportError:
+            # Fallback to simple text-based menu on Windows
+            return self._show_text_menu(menu_options)
+
+        selected_index = 0
+
+        while True:
+            # Clear previous menu and redraw
+            print("\n" + "=" * 60)
+            print("\n📋 Choose an action (use ↑↓ arrows, Enter to select):")
+
+            for i, (description, key, _) in enumerate(menu_options):
+                if i == selected_index:
+                    print(f"  → {key}. {description}")
+                else:
+                    print(f"    {key}. {description}")
+
+            # Get key input
+            key = self._get_key()
+
+            if key == "\x1b":  # ESC sequence
+                # Handle arrow keys
+                key += self._get_key() + self._get_key()
+                if key == "\x1b[A":  # Up arrow
+                    selected_index = (selected_index - 1) % len(menu_options)
+                elif key == "\x1b[B":  # Down arrow
+                    selected_index = (selected_index + 1) % len(menu_options)
+            elif key == "\r" or key == "\n":  # Enter
+                # Execute selected option
+                _, _, action = menu_options[selected_index]
+                return action()
+            elif key.upper() in [opt[1] for opt in menu_options]:
+                # Direct key selection
+                for i, (_, opt_key, action) in enumerate(menu_options):
+                    if key.upper() == opt_key:
+                        return action()
+
+            # Clear screen for next iteration
+            print("\033[2J\033[H", end="")
+            self.print_banner()
+            print(f"\n✅ Found {len(self.sessions)} conversations!\n")
+
+            # Redraw session list
+            for i, session_path in enumerate(self.sessions[:20], 1):
+                project = session_path.parent.name
+                modified = datetime.fromtimestamp(session_path.stat().st_mtime)
+                size_kb = session_path.stat().st_size / 1024
+                date_str = modified.strftime("%Y-%m-%d %H:%M")
+                print(f"  {i:2d}. [{date_str}] {project[:30]:<30} ({size_kb:.1f} KB)")
+
+            if len(self.sessions) > 20:
+                print(f"\n  ... and {len(self.sessions) - 20} more conversations")
+
+    def _show_text_menu(self, menu_options: List[tuple]) -> List[int]:
+        """Fallback text-based menu for Windows/non-terminal environments"""
+        print("\n" + "=" * 60)
+        print("\nOptions:")
+        for description, key, _ in menu_options:
+            print(f"  {key}. {description}")
+
+        while True:
+            choice = input("\nYour choice: ").strip().upper()
+
+            for _, opt_key, action in menu_options:
+                if choice == opt_key:
+                    return action()
+
+            print("❌ Invalid choice. Please try again.")
+
+    def _get_key(self):
+        """Get a single keypress"""
+        import sys
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            key = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return key
+
+    def _handle_select_specific(self) -> List[int]:
+        """Handle specific conversation selection"""
+        selection = input("Enter conversation numbers (e.g., 1,3,5): ").strip()
+        try:
+            indices = [int(x.strip()) - 1 for x in selection.split(",")]
+            if all(0 <= i < len(self.sessions) for i in indices):
+                return indices
+            else:
+                print("❌ Invalid selection. Please use valid numbers.")
+                return []
+        except ValueError:
+            print("❌ Invalid format. Use comma-separated numbers.")
+            return []
+
+    def _handle_search(self) -> List[int]:
+        """Handle search conversations"""
+        return self.search_conversations()
 
     def search_conversations(self) -> List[int]:
         """Launch enhanced search interface with full interactive experience"""
@@ -212,9 +299,7 @@ class InteractiveUI:
                 self.extractor.display_conversation(Path(selected_file))
 
                 # Ask if user wants to extract it
-                extract_choice = (
-                    input("\n📤 Extract this conversation? (y/N): ").strip().lower()
-                )
+                extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
                 if extract_choice == "y":
                     try:
                         index = self.sessions.index(Path(selected_file))
@@ -236,13 +321,9 @@ class InteractiveUI:
         self.extractor.output_dir = output_dir
 
         # Use the extractor's method
-        success_count, total_count = self.extractor.extract_multiple(
-            self.sessions, indices
-        )
+        success_count, total_count = self.extractor.extract_multiple(self.sessions, indices)
 
-        print(
-            f"\n\n✅ Successfully extracted {success_count}/{total_count} conversations!"
-        )
+        print(f"\n\n✅ Successfully extracted {success_count}/{total_count} conversations!")
         return success_count
 
     def open_folder(self, path: Path):
