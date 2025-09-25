@@ -116,7 +116,7 @@ class ClaudeConversationExtractor {
             file: conversation,
             matches: matchCount,
             previews: previews,
-            relevance: matchCount / lines.length
+            relevance: Math.min(1.0, matchCount / Math.max(lines.length, 10)) // Ensure relevance > 0
           });
         }
       } catch (error) {

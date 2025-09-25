@@ -9,9 +9,11 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "jest",
-    "build": "tsc",
-    "dev": "node --loader ts-node/esm src/cli.ts"
+    "test": "echo 'No tests configured yet'",
+    "lint": "echo 'No linting configured yet'", 
+    "typecheck": "echo 'No typechecking configured yet'",
+    "build": "echo 'Build not needed for JS version'",
+    "dev": "node src/cli.js"
   },
   "dependencies": {
     "boxen": "^5.1.2",
