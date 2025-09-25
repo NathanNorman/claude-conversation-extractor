@@ -21,16 +21,6 @@ const colors = {
   subdued: chalk.hex('#909090')
 };
 
-// Vibe-log style icons
-const icons = {
-  search: '🔍',
-  file: '📄',
-  folder: '📁',
-  success: '✓',
-  error: '✗',
-  arrow: '→'
-};
-
 class ClaudeConversationExtractor {
   constructor() {
     this.conversationsPath = join(homedir(), '.claude', 'projects');
@@ -65,13 +55,12 @@ class ClaudeConversationExtractor {
               }
             }
           } catch (error) {
-            // Skip inaccessible project directories
+            // Skip inaccessible directories
           }
         }
       }
     } catch (error) {
-      console.log(colors.error('❌ Error accessing Claude conversations directory'));
-      console.log(colors.dim(`Path: ${this.conversationsPath}`));
+      console.log(colors.error('❌ Error accessing conversations directory'));
     }
     
     return conversations.sort((a, b) => b.modified.getTime() - a.modified.getTime());
@@ -91,23 +80,20 @@ class ClaudeConversationExtractor {
         for (const line of lines) {
           try {
             const parsed = JSON.parse(line);
-            const messageContent = typeof parsed.content === 'string' 
-              ? parsed.content 
-              : JSON.stringify(parsed.content);
-              
-            if (messageContent.toLowerCase().includes(queryLower)) {
-              matchCount++;
-              if (previews.length < 2) {
-                // Extract a preview around the match
-                const sentences = messageContent.split(/[.!?]+/);
-                const matchingSentence = sentences.find(s => s.toLowerCase().includes(queryLower));
-                if (matchingSentence) {
-                  previews.push(matchingSentence.trim().slice(0, 80));
+            if (parsed.content && typeof parsed.content === 'string') {
+              if (parsed.content.toLowerCase().includes(queryLower)) {
+                matchCount++;
+                if (previews.length < 1) {
+                  const sentences = parsed.content.split(/[.!?]+/);
+                  const match = sentences.find(s => s.toLowerCase().includes(queryLower));
+                  if (match) {
+                    previews.push(match.trim());
+                  }
                 }
               }
             }
           } catch {
-            // Skip invalid JSON lines
+            // Skip invalid JSON
           }
         }
         
@@ -115,12 +101,12 @@ class ClaudeConversationExtractor {
           results.push({
             file: conversation,
             matches: matchCount,
-            previews: previews,
-            relevance: Math.max(0.01, Math.min(1.0, (matchCount * 10) / Math.max(lines.length, 1))) // Fix relevance calculation
+            preview: previews[0] || 'Match found in conversation',
+            relevance: Math.min(1.0, (matchCount * 5) / Math.max(lines.length, 1))
           });
         }
       } catch (error) {
-        // Skip files that can't be read
+        // Skip unreadable files
       }
     }
     
@@ -128,78 +114,20 @@ class ClaudeConversationExtractor {
   }
 }
 
-// Live search interface like vibe-log
-async function showLiveSearchInterface() {
+// Live search with proper rendering
+async function showLiveSearch() {
   const extractor = new ClaudeConversationExtractor();
-  
-  console.clear();
-  
-  // Vibe-log style banner
-  console.log(colors.accent(`
- ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
-██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
-██║     ██║     ███████║██║   ██║██║  ██║█████╗  
-██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝  
-╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
-  `));
-  
-  console.log(colors.primary('        🔍 Interactive Conversation Search\n'));
-  
-  // Get all conversations
   const conversations = await extractor.findConversations();
   
   if (conversations.length === 0) {
     console.log(colors.error('❌ No Claude conversations found!'));
-    console.log(colors.dim('Make sure you have used Claude Code at least once.'));
     return;
   }
   
-  console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
-  
-  // Live search using inquirer with autocomplete style
-  let searchResults = [];
-  
-  const createSearchChoices = async (input = '') => {
-    if (!input || input.length < 2) {
-      return [
-        { name: colors.dim('Type at least 2 characters to search...'), value: null, disabled: true }
-      ];
-    }
-    
-    console.log(colors.info(`\n🔎 Searching for "${input}"...`));
-    const results = await extractor.searchConversations(input, conversations);
-    
-    if (results.length === 0) {
-      return [
-        { name: colors.warning('❌ No matches found'), value: null, disabled: true },
-        { name: colors.dim('Try a different search term'), value: null, disabled: true }
-      ];
-    }
-    
-    searchResults = results; // Store for later use
-    
-    return results.slice(0, 10).map((result, index) => {
-      const date = result.file.modified.toLocaleDateString();
-      const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      const project = result.file.project.slice(0, 20);
-      const relevance = (result.relevance * 100).toFixed(0);
-      const preview = result.previews[0] || 'No preview available';
-      
-      return {
-        name: `${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '% match')}\n    ${colors.subdued(preview.slice(0, 60) + '...')}`,
-        value: result.file,
-        short: `${project} (${date})`
-      };
-    });
-  };
-  
-  // Live search interface - true live search as you type
   let searchTerm = '';
   let results = [];
   let selectedIndex = 0;
   
-  // Set up readline for raw input
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -209,60 +137,75 @@ async function showLiveSearchInterface() {
     process.stdin.setRawMode(true);
   }
   
-  const render = async () => {
-    console.clear();
+  const drawScreen = async () => {
+    // Build entire screen as string for atomic update
+    let screen = '\u001b[2J\u001b[H'; // Clear and home
     
     // Banner
-    console.log(colors.accent(`
+    screen += colors.accent(`
  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
 ██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
 ██║     ██║     ███████║██║   ██║██║  ██║█████╗  
 ██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝  
 ╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
-    `));
+`) + '\n';
     
-    console.log(colors.primary('        🔍 Interactive Conversation Search\n'));
-    console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
+    screen += colors.primary('        🔍 Interactive Conversation Search') + '\n';
+    screen += colors.success(`✅ Found ${conversations.length} conversations`) + '\n\n';
     
-    // Search box
-    console.log(colors.primary('🔍 Search: ') + colors.highlight(searchTerm) + colors.dim('_'));
+    // Search input line
+    screen += colors.primary('🔍 Search: ') + colors.highlight(searchTerm) + colors.dim('_') + '\n';
     
+    // Show search results if we have enough characters
     if (searchTerm.length >= 2) {
-      results = await extractor.searchConversations(searchTerm, conversations);
-      
-      if (results.length === 0) {
-        console.log(colors.warning('\n❌ No matches found'));
-      } else {
-        console.log(colors.info(`\n📋 Found ${results.length} matches:\n`));
+      try {
+        results = await extractor.searchConversations(searchTerm, conversations);
         
-        // Show results
-        results.slice(0, 8).forEach((result, index) => {
-          const isSelected = index === selectedIndex;
-          const date = result.file.modified.toLocaleDateString();
-          const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-          const project = result.file.project.slice(0, 20);
-          const relevance = (result.relevance * 100).toFixed(0);
-          const preview = result.previews[0] || 'No preview';
+        if (results.length === 0) {
+          screen += '\n' + colors.warning('❌ No matches found') + '\n';
+        } else {
+          screen += '\n' + colors.info(`📋 Found ${results.length} matches:`) + '\n\n';
           
-          const cursor = isSelected ? colors.accent('▶ ') : '  ';
-          const line = `${cursor}${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '%')}`;
-          console.log(line);
-          
-          if (isSelected) {
-            console.log(colors.subdued(`    ${preview.slice(0, 60)}...`));
+          // Make sure selectedIndex is valid
+          if (selectedIndex >= results.length) {
+            selectedIndex = 0;
           }
-        });
-        
-        if (results.length > 8) {
-          console.log(colors.dim(`\n    ... and ${results.length - 8} more results`));
+          
+          // Display up to 6 results
+          const displayResults = results.slice(0, 6);
+          displayResults.forEach((result, index) => {
+            const isSelected = index === selectedIndex;
+            const date = result.file.modified.toLocaleDateString();
+            const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const project = result.file.project.slice(0, 30);
+            const relevance = Math.max(1, Math.round(result.relevance * 100));
+            
+            const cursor = isSelected ? colors.accent('▶ ') : '  ';
+            screen += `${cursor}${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '%')}` + '\n';
+            
+            if (isSelected && result.preview) {
+              screen += colors.subdued(`    ${result.preview.slice(0, 70)}...`) + '\n';
+            }
+          });
+          
+          if (results.length > 6) {
+            screen += '\n' + colors.dim(`... and ${results.length - 6} more results`) + '\n';
+          }
         }
+      } catch (error) {
+        screen += '\n' + colors.error(`❌ Search error: ${error.message}`) + '\n';
       }
-    } else if (searchTerm.length > 0) {
-      console.log(colors.dim('\nType at least 2 characters to search...'));
+    } else if (searchTerm.length === 1) {
+      screen += '\n' + colors.dim('Type at least 2 characters to search...') + '\n';
+    } else {
+      screen += '\n' + colors.dim('Start typing to search conversations...') + '\n';
     }
     
-    console.log(colors.dim('\n[↑↓] Navigate  [Enter] Select  [Esc] Exit  [Backspace] Delete'));
+    screen += '\n' + colors.dim('[↑↓] Navigate  [Enter] Select  [Esc] Exit  [Backspace] Delete') + '\n';
+    
+    // Write entire screen at once to prevent flicker
+    process.stdout.write(screen);
   };
   
   return new Promise((resolve) => {
@@ -277,18 +220,18 @@ async function showLiveSearchInterface() {
         }
       } else if (key && key.name === 'up') {
         selectedIndex = Math.max(0, selectedIndex - 1);
-        await render();
+        await drawScreen();
       } else if (key && key.name === 'down') {
-        selectedIndex = Math.min(results.length - 1, selectedIndex + 1);
-        await render();
+        selectedIndex = Math.min(Math.max(0, results.length - 1), selectedIndex + 1);
+        await drawScreen();
       } else if (key && key.name === 'backspace') {
         searchTerm = searchTerm.slice(0, -1);
         selectedIndex = 0;
-        await render();
+        await drawScreen();
       } else if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
         searchTerm += str;
         selectedIndex = 0;
-        await render();
+        await drawScreen();
       }
     };
     
@@ -304,204 +247,55 @@ async function showLiveSearchInterface() {
     process.stdin.on('keypress', handleKeypress);
     
     // Initial render
-    render();
-  }).then(async (selectedConversation) => {
-    if (selectedConversation) {
-      await showConversationActions(selectedConversation);
-    }
+    drawScreen();
   });
-}
-
-async function showManualSearch(extractor, conversations) {
-  // Simple search prompt
-  const { searchTerm } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'searchTerm',
-      message: colors.primary('🔍 Enter search term:'),
-      validate: (input) => input.trim().length > 0 || 'Please enter a search term'
-    }
-  ]);
-  
-  console.log(colors.info(`\n🔎 Searching for "${searchTerm}"...`));
-  
-  const results = await extractor.searchConversations(searchTerm, conversations);
-  
-  if (results.length === 0) {
-    console.log(colors.warning('❌ No matches found'));
-    
-    const { tryAgain } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'tryAgain',
-        message: 'Try another search?',
-        default: true
-      }
-    ]);
-    
-    if (tryAgain) {
-      await showLiveSearchInterface();
-    }
-    return;
-  }
-  
-  // Show results in vibe-log style
-  const choices = results.slice(0, 15).map((result) => {
-    const date = result.file.modified.toLocaleDateString();
-    const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-    const project = result.file.project.slice(0, 25);
-    const relevance = (result.relevance * 100).toFixed(0);
-    const preview = result.previews[0] || 'No preview';
-    
-    return {
-      name: `${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '% match')}\n    ${colors.subdued(preview.slice(0, 70) + '...')}`,
-      value: result.file,
-      short: `${project} (${date})`
-    };
-  });
-  
-  // Add search again option
-  choices.push(new inquirer.Separator());
-  choices.push({
-    name: colors.dim('🔄 Search again'),
-    value: 'search_again',
-    short: 'Search again'
-  });
-  
-  const { selectedConversation } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'selectedConversation',
-      message: colors.primary(`Select conversation (${results.length} found):`),
-      choices,
-      pageSize: 10,
-      loop: false
-    }
-  ]);
-  
-  if (selectedConversation === 'search_again') {
-    await showLiveSearchInterface();
-    return;
-  }
-  
-  if (selectedConversation) {
-    await showConversationActions(selectedConversation);
-  }
 }
 
 async function showConversationActions(conversation) {
   console.clear();
   
-  // Show conversation preview
-  console.log(colors.primary('\n📄 Conversation Preview\n'));
+  console.log(colors.primary('\n📄 Conversation Details\n'));
   console.log(colors.dim(`Project: ${conversation.project}`));
   console.log(colors.dim(`File: ${conversation.name}`));
+  console.log(colors.dim(`Path: ${conversation.path}`));
   console.log(colors.dim(`Modified: ${conversation.modified.toLocaleString()}`));
-  console.log(colors.dim(`Size: ${(conversation.size / 1024).toFixed(1)} KB`));
-  console.log('\n' + colors.dim('─'.repeat(60)) + '\n');
+  console.log(colors.dim(`Size: ${(conversation.size / 1024).toFixed(1)} KB\n`));
   
-  // Show first few messages
-  try {
-    const content = await readFile(conversation.path, 'utf-8');
-    const lines = content.split('\n').filter(line => line.trim());
-    let messageCount = 0;
-    
-    for (const line of lines) {
-      if (messageCount >= 5) break; // Show first 5 messages
-      
-      try {
-        const parsed = JSON.parse(line);
-        const speaker = parsed.speaker || 'unknown';
-        const messageContent = typeof parsed.content === 'string' 
-          ? parsed.content 
-          : JSON.stringify(parsed.content, null, 2);
-        
-        if (speaker === 'human') {
-          console.log(colors.primary('👤 Human:'));
-        } else if (speaker === 'assistant') {
-          console.log(colors.success('🤖 Assistant:'));
-        }
-        
-        // Show preview of message
-        const preview = messageContent.slice(0, 200);
-        console.log(colors.dim('   ' + preview + (messageContent.length > 200 ? '...' : '')));
-        console.log('');
-        messageCount++;
-      } catch {
-        // Skip invalid JSON lines
-      }
-    }
-    
-    if (lines.length > 5) {
-      console.log(colors.subdued(`... and ${lines.length - 5} more messages`));
-    }
-    
-  } catch (error) {
-    console.log(colors.error('❌ Error reading conversation file'));
-  }
-  
-  // Action menu - vibe-log style
   const { action } = await inquirer.prompt([
     {
       type: 'list',
       name: 'action',
-      message: colors.primary('What would you like to do?'),
+      message: 'What would you like to do?',
       choices: [
-        { 
-          name: `${icons.file} Copy file path`, 
-          value: 'copy' 
-        },
-        { 
-          name: `${icons.folder} Show in finder`, 
-          value: 'finder' 
-        },
-        { 
-          name: `📝 Create Claude Code context`, 
-          value: 'context' 
-        },
+        { name: '📋 Copy file path', value: 'copy' },
+        { name: '📂 Show file location', value: 'location' },
+        { name: '📝 Create Claude Code context', value: 'context' },
         new inquirer.Separator(),
-        { 
-          name: `${colors.dim('🔙 Back to search')}`, 
-          value: 'back' 
-        },
-        { 
-          name: `${colors.dim('🔍 New search')}`, 
-          value: 'search' 
-        },
-        { 
-          name: `${colors.dim('🚪 Exit')}`, 
-          value: 'exit' 
-        }
-      ],
-      pageSize: 10
+        { name: '🔙 Back to search', value: 'back' },
+        { name: '🚪 Exit', value: 'exit' }
+      ]
     }
   ]);
   
   switch (action) {
     case 'copy':
-      console.log(colors.success(`\n📋 File path copied to terminal:`));
-      console.log(colors.highlight(conversation.path));
-      console.log(colors.dim('Select the path above to copy it'));
+      console.log(colors.success(`\n📋 File path:\n${colors.highlight(conversation.path)}`));
       await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
       await showConversationActions(conversation);
       break;
       
-    case 'finder':
-      console.log(colors.info(`\n📂 File location:`));
-      console.log(colors.highlight(`Project: ${conversation.project}`));
-      console.log(colors.highlight(`Path: ${conversation.path}`));
+    case 'location':
+      console.log(colors.info(`\n📂 Location:\n${colors.highlight(conversation.path)}`));
       await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
       await showConversationActions(conversation);
       break;
       
     case 'context':
-      // Create a context file for Claude Code
       try {
         const content = await readFile(conversation.path, 'utf-8');
         const contextPath = join(process.cwd(), `claude-context-${conversation.project}.md`);
-        await require('fs').promises.writeFile(contextPath, `# Claude Conversation Context\n\n**Project:** ${conversation.project}\n**File:** ${conversation.name}\n**Modified:** ${conversation.modified.toLocaleString()}\n\n---\n\n${content}`);
-        console.log(colors.success(`\n🚀 Claude Code context created:`));
-        console.log(colors.highlight(contextPath));
+        await require('fs').promises.writeFile(contextPath, `# Claude Context\n\n**Project:** ${conversation.project}\n**File:** ${conversation.name}\n\n---\n\n${content}`);
+        console.log(colors.success(`\n🚀 Context created:\n${colors.highlight(contextPath)}`));
         await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
         await showConversationActions(conversation);
       } catch (error) {
@@ -512,24 +306,27 @@ async function showConversationActions(conversation) {
       break;
       
     case 'back':
-    case 'search':
-      await showLiveSearchInterface();
+      const selected = await showLiveSearch();
+      if (selected) {
+        await showConversationActions(selected);
+      }
       break;
       
     case 'exit':
       console.log(colors.dim('\nGoodbye! 👋'));
       process.exit(0);
-      break;
   }
 }
 
 async function main() {
   console.clear();
-  await showLiveSearchInterface();
+  
+  const selectedConversation = await showLiveSearch();
+  if (selectedConversation) {
+    await showConversationActions(selectedConversation);
+  } else {
+    console.log(colors.dim('\nGoodbye! 👋'));
+  }
 }
 
-// Handle CLI execution and errors
-main().catch(error => {
-  console.error(colors.error('❌ Error:'), error.message);
-  process.exit(1);
-});
+main().catch(console.error);
