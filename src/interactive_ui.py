@@ -9,9 +9,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from extract_claude_logs import ClaudeConversationExtractor
-from realtime_search import RealTimeSearch, create_smart_searcher
-from search_conversations import ConversationSearcher
+# Handle both package and direct execution imports
+try:
+    from .extract_claude_logs import ClaudeConversationExtractor
+    from .realtime_search import RealTimeSearch, create_smart_searcher
+    from .search_conversations import ConversationSearcher
+except ImportError:
+    # Fallback for direct execution or when not installed as package
+    from extract_claude_logs import ClaudeConversationExtractor
+    from realtime_search import RealTimeSearch, create_smart_searcher
+    from search_conversations import ConversationSearcher
 
 
 class InteractiveUI:
@@ -129,7 +136,7 @@ class InteractiveUI:
         print("  A. Extract ALL conversations")
         print("  R. Extract 5 most RECENT")
         print("  S. SELECT specific conversations (e.g., 1,3,5)")
-        print("  F. FIND conversations (real-time search)")
+        print("  F. SEARCH conversations (real-time search)")
         print("  Q. QUIT")
 
         while True:
@@ -179,14 +186,21 @@ class InteractiveUI:
         selected_file = rts.run()
 
         if selected_file:
-            # Find the index of the selected file
-            try:
-                index = self.sessions.index(selected_file)
-                return [index]
-            except ValueError:
-                print("\n❌ Error: Selected file not found in sessions list")
-                input("\nPress Enter to continue...")
-                return []
+            # View the selected conversation
+            self.extractor.display_conversation(Path(selected_file))
+            
+            # Ask if user wants to extract it
+            extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
+            if extract_choice == 'y':
+                try:
+                    index = self.sessions.index(Path(selected_file))
+                    return [index]
+                except ValueError:
+                    print("\n❌ Error: Selected file not found in sessions list")
+                    input("\nPress Enter to continue...")
+            
+            # Return empty to go back to menu
+            return []
 
         return []
 
