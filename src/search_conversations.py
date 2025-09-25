@@ -178,19 +178,13 @@ class ConversationSearcher:
 
         for jsonl_file in jsonl_files:
             if mode == "regex":
-                results = self._search_regex(
-                    jsonl_file, query, speaker_filter, case_sensitive
-                )
+                results = self._search_regex(jsonl_file, query, speaker_filter, case_sensitive)
             elif mode == "exact":
-                results = self._search_exact(
-                    jsonl_file, query, speaker_filter, case_sensitive
-                )
+                results = self._search_exact(jsonl_file, query, speaker_filter, case_sensitive)
             elif mode == "semantic" and self.nlp:
                 results = self._search_semantic(jsonl_file, query, speaker_filter)
             else:  # smart mode - combines multiple approaches
-                results = self._search_smart(
-                    jsonl_file, query, speaker_filter, case_sensitive
-                )
+                results = self._search_smart(jsonl_file, query, speaker_filter, case_sensitive)
 
             all_results.extend(results)
 
@@ -254,9 +248,7 @@ class ConversationSearcher:
 
                         # Extract message based on entry type
                         if entry.get("type") in ["user", "assistant"]:
-                            speaker = (
-                                "human" if entry["type"] == "user" else "assistant"
-                            )
+                            speaker = "human" if entry["type"] == "user" else "assistant"
 
                             # Apply speaker filter
                             if speaker_filter and speaker != speaker_filter:
@@ -274,9 +266,7 @@ class ConversationSearcher:
 
                             if relevance > 0.1:  # Threshold for inclusion
                                 # Extract context
-                                context = self._extract_context(
-                                    content, query, case_sensitive
-                                )
+                                context = self._extract_context(content, query, case_sensitive)
 
                                 # Parse timestamp if present
                                 timestamp = None
@@ -331,9 +321,7 @@ class ConversationSearcher:
                         entry = json.loads(line.strip())
 
                         if entry.get("type") in ["user", "assistant"]:
-                            speaker = (
-                                "human" if entry["type"] == "user" else "assistant"
-                            )
+                            speaker = "human" if entry["type"] == "user" else "assistant"
 
                             if speaker_filter and speaker != speaker_filter:
                                 continue
@@ -342,18 +330,14 @@ class ConversationSearcher:
                             if not content:
                                 continue
 
-                            search_content = (
-                                content if case_sensitive else content.lower()
-                            )
+                            search_content = content if case_sensitive else content.lower()
 
                             if search_query in search_content:
                                 # Calculate relevance based on match frequency
                                 match_count = search_content.count(search_query)
                                 relevance = min(1.0, match_count * 0.2)
 
-                                context = self._extract_context(
-                                    content, query, case_sensitive
-                                )
+                                context = self._extract_context(content, query, case_sensitive)
 
                                 # Parse timestamp if present
                                 timestamp = None
@@ -414,9 +398,7 @@ class ConversationSearcher:
                         entry = json.loads(line.strip())
 
                         if entry.get("type") in ["user", "assistant"]:
-                            speaker = (
-                                "human" if entry["type"] == "user" else "assistant"
-                            )
+                            speaker = "human" if entry["type"] == "user" else "assistant"
 
                             if speaker_filter and speaker != speaker_filter:
                                 continue
@@ -484,9 +466,7 @@ class ConversationSearcher:
 
         # Process query with spaCy
         query_doc = self.nlp(query.lower())
-        query_tokens = [
-            token for token in query_doc if not token.is_stop and token.is_alpha
-        ]
+        query_tokens = [token for token in query_doc if not token.is_stop and token.is_alpha]
 
         try:
             with open(jsonl_file, "r", encoding="utf-8") as f:
@@ -497,9 +477,7 @@ class ConversationSearcher:
                         entry = json.loads(line.strip())
 
                         if entry.get("type") in ["user", "assistant"]:
-                            speaker = (
-                                "human" if entry["type"] == "user" else "assistant"
-                            )
+                            speaker = "human" if entry["type"] == "user" else "assistant"
 
                             if speaker_filter and speaker != speaker_filter:
                                 continue
@@ -626,9 +604,7 @@ class ConversationSearcher:
 
         return min(1.0, relevance)
 
-    def _calculate_semantic_similarity(
-        self, query_doc, query_tokens, content_doc
-    ) -> float:
+    def _calculate_semantic_similarity(self, query_doc, query_tokens, content_doc) -> float:
         """Calculate semantic similarity using spaCy."""
         if not query_tokens:
             return 0.0
@@ -670,9 +646,7 @@ class ConversationSearcher:
 
         if pos == -1:
             # No exact match, return beginning of content
-            return content[: context_size * 2] + (
-                "..." if len(content) > context_size * 2 else ""
-            )
+            return content[: context_size * 2] + ("..." if len(content) > context_size * 2 else "")
 
         # Extract context around match
         start = max(0, pos - context_size)
@@ -706,9 +680,7 @@ class ConversationSearcher:
         jsonl_files = list(search_dir.rglob("*.jsonl"))
         return self._filter_files_by_date(jsonl_files, date_from, date_to)
 
-    def get_conversation_topics(
-        self, jsonl_file: Path, max_topics: int = 5
-    ) -> List[str]:
+    def get_conversation_topics(self, jsonl_file: Path, max_topics: int = 5) -> List[str]:
         """
         Extract main topics from a conversation.
 
@@ -789,9 +761,7 @@ def create_search_index(search_dir: Path, output_file: Path) -> None:
                         entry = json.loads(line.strip())
                         if entry.get("type") in ["user", "assistant"]:
                             metadata["message_count"] += 1
-                            speaker = (
-                                "human" if entry["type"] == "user" else "assistant"
-                            )
+                            speaker = "human" if entry["type"] == "user" else "assistant"
                             metadata["speakers"].add(speaker)
 
                             if metadata["first_message"] is None:

@@ -46,12 +46,8 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/ZeroSumQuant/claude-conversation-extractor",
     project_urls={
-        "Bug Tracker": (
-            "https://github.com/ZeroSumQuant/claude-conversation-extractor/issues"
-        ),
-        "Documentation": (
-            "https://github.com/ZeroSumQuant/claude-conversation-extractor#readme"
-        ),
+        "Bug Tracker": ("https://github.com/ZeroSumQuant/claude-conversation-extractor/issues"),
+        "Documentation": ("https://github.com/ZeroSumQuant/claude-conversation-extractor#readme"),
         "Source": "https://github.com/ZeroSumQuant/claude-conversation-extractor",
     },
     classifiers=[
@@ -85,9 +81,9 @@ setup(
     entry_points={
         "console_scripts": [
             "claude-extract=extract_claude_logs:launch_interactive",  # Primary command
-            "claude-logs=extract_claude_logs:launch_interactive",     # Kept for backward compatibility
-            "claude-start=extract_claude_logs:launch_interactive",    # Alternative alias
-            "claude-search=search_cli:main",                          # Direct search command
+            "claude-logs=extract_claude_logs:launch_interactive",  # Kept for backward compatibility
+            "claude-start=extract_claude_logs:launch_interactive",  # Alternative alias
+            "claude-search=search_cli:main",  # Direct search command
         ],
     },
     cmdclass={
