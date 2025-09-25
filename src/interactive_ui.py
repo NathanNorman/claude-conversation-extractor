@@ -79,13 +79,13 @@ class InteractiveUI:
         self.print_banner()
         print("\n📁 Where would you like to save your conversations?\n")
 
-        # Suggest common locations
+        # Suggest common locations with ~/.claude/claude_conversations as default
         home = Path.home()
         suggestions = [
-            home / "Desktop" / "Claude Conversations",
-            home / "Documents" / "Claude Conversations",
-            home / "Downloads" / "Claude Conversations",
-            Path.cwd() / "Claude Conversations",
+            home / ".claude" / "claude_conversations",  # Default location
+            home / "Desktop" / "claude_conversations",
+            home / "Documents" / "claude_conversations",
+            Path.cwd() / "claude_conversations",
         ]
 
         print("Suggested locations:")
