@@ -272,7 +272,15 @@ class InteractiveUI:
 
     def _handle_search(self) -> List[int]:
         """Handle search conversations"""
-        return self.search_conversations()
+        print("\n🔍 Launching enhanced search...")
+        try:
+            result = self.search_conversations()
+            print(f"📊 Search returned: {result}")
+            return result
+        except Exception as e:
+            print(f"❌ Search error: {e}")
+            input("Press Enter to continue...")
+            return []
 
     def search_conversations(self) -> List[int]:
         """Launch enhanced search interface with full interactive experience"""
