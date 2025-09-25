@@ -21,6 +21,19 @@ const colors = {
   subdued: chalk.hex('#909090')
 };
 
+// Debounce function for performance
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
 class ClaudeConversationExtractor {
   constructor() {
     this.conversationsPath = join(homedir(), '.claude', 'projects');
@@ -75,19 +88,26 @@ class ClaudeConversationExtractor {
         const content = await readFile(conversation.path, 'utf-8');
         const lines = content.split('\n').filter(line => line.trim());
         let matchCount = 0;
+        let totalWords = 0;
         const previews = [];
         
         for (const line of lines) {
           try {
             const parsed = JSON.parse(line);
             if (parsed.content && typeof parsed.content === 'string') {
-              if (parsed.content.toLowerCase().includes(queryLower)) {
+              const messageContent = parsed.content;
+              totalWords += messageContent.split(' ').length;
+              
+              if (messageContent.toLowerCase().includes(queryLower)) {
                 matchCount++;
                 if (previews.length < 1) {
-                  const sentences = parsed.content.split(/[.!?]+/);
-                  const match = sentences.find(s => s.toLowerCase().includes(queryLower));
-                  if (match) {
-                    previews.push(match.trim());
+                  // Find sentence with match
+                  const words = messageContent.split(' ');
+                  const matchIndex = words.findIndex(word => word.toLowerCase().includes(queryLower));
+                  if (matchIndex >= 0) {
+                    const start = Math.max(0, matchIndex - 8);
+                    const end = Math.min(words.length, matchIndex + 12);
+                    previews.push(words.slice(start, end).join(' '));
                   }
                 }
               }
@@ -98,11 +118,12 @@ class ClaudeConversationExtractor {
         }
         
         if (matchCount > 0) {
+          const relevance = Math.min(0.95, (matchCount * 20) / Math.max(totalWords * 0.01, 1));
           results.push({
             file: conversation,
             matches: matchCount,
             preview: previews[0] || 'Match found in conversation',
-            relevance: Math.min(1.0, (matchCount * 5) / Math.max(lines.length, 1))
+            relevance: relevance
           });
         }
       } catch (error) {
@@ -114,67 +135,65 @@ class ClaudeConversationExtractor {
   }
 }
 
-// Live search with proper rendering
+// Proper live search interface using readline best practices
 async function showLiveSearch() {
   const extractor = new ClaudeConversationExtractor();
   const conversations = await extractor.findConversations();
   
   if (conversations.length === 0) {
     console.log(colors.error('❌ No Claude conversations found!'));
-    return;
+    return null;
   }
   
-  let searchTerm = '';
-  let results = [];
-  let selectedIndex = 0;
-  
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  
-  const drawScreen = async () => {
-    // Build entire screen as string for atomic update
-    let screen = '\u001b[2J\u001b[H'; // Clear and home
+  return new Promise((resolve) => {
+    let searchTerm = '';
+    let results = [];
+    let selectedIndex = 0;
+    let isSearching = false;
     
-    // Banner
-    screen += colors.accent(`
+    // Create readline interface
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true
+    });
+    
+    // Enable keypress events
+    readline.emitKeypressEvents(process.stdin, rl);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    
+    const displayScreen = async () => {
+      // Move cursor to top left and clear screen
+      process.stdout.write('\u001b[H\u001b[2J');
+      
+      // Header
+      console.log(colors.accent(`
  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
 ██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
 ██║     ██║     ███████║██║   ██║██║  ██║█████╗  
 ██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝  
 ╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
-`) + '\n';
-    
-    screen += colors.primary('        🔍 Interactive Conversation Search') + '\n';
-    screen += colors.success(`✅ Found ${conversations.length} conversations`) + '\n\n';
-    
-    // Search input line
-    screen += colors.primary('🔍 Search: ') + colors.highlight(searchTerm) + colors.dim('_') + '\n';
-    
-    // Show search results if we have enough characters
-    if (searchTerm.length >= 2) {
-      try {
-        results = await extractor.searchConversations(searchTerm, conversations);
-        
-        if (results.length === 0) {
-          screen += '\n' + colors.warning('❌ No matches found') + '\n';
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝`));
+      
+      console.log(colors.primary('        🔍 Interactive Conversation Search'));
+      console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
+      
+      // Search input
+      console.log(colors.primary('🔍 Type to search: ') + colors.highlight(searchTerm) + colors.dim('│'));
+      
+      // Results
+      if (searchTerm.length >= 2) {
+        if (isSearching) {
+          console.log(colors.info('\n🔎 Searching...'));
+        } else if (results.length === 0) {
+          console.log(colors.warning('\n❌ No matches found'));
         } else {
-          screen += '\n' + colors.info(`📋 Found ${results.length} matches:`) + '\n\n';
+          console.log(colors.info(`\n📋 ${results.length} matches found:\n`));
           
-          // Make sure selectedIndex is valid
-          if (selectedIndex >= results.length) {
-            selectedIndex = 0;
-          }
-          
-          // Display up to 6 results
-          const displayResults = results.slice(0, 6);
-          displayResults.forEach((result, index) => {
+          // Show top 5 results
+          results.slice(0, 5).forEach((result, index) => {
             const isSelected = index === selectedIndex;
             const date = result.file.modified.toLocaleDateString();
             const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -182,33 +201,45 @@ async function showLiveSearch() {
             const relevance = Math.max(1, Math.round(result.relevance * 100));
             
             const cursor = isSelected ? colors.accent('▶ ') : '  ';
-            screen += `${cursor}${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '%')}` + '\n';
+            const resultLine = `${cursor}${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '%')}`;
+            console.log(resultLine);
             
             if (isSelected && result.preview) {
-              screen += colors.subdued(`    ${result.preview.slice(0, 70)}...`) + '\n';
+              console.log(colors.subdued(`    ${result.preview.slice(0, 80)}...`));
             }
           });
           
-          if (results.length > 6) {
-            screen += '\n' + colors.dim(`... and ${results.length - 6} more results`) + '\n';
+          if (results.length > 5) {
+            console.log(colors.dim(`\n... ${results.length - 5} more results`));
           }
         }
-      } catch (error) {
-        screen += '\n' + colors.error(`❌ Search error: ${error.message}`) + '\n';
+      } else if (searchTerm.length > 0) {
+        console.log(colors.dim('\nType at least 2 characters...'));
+      } else {
+        console.log(colors.dim('\nStart typing to search conversations...'));
       }
-    } else if (searchTerm.length === 1) {
-      screen += '\n' + colors.dim('Type at least 2 characters to search...') + '\n';
-    } else {
-      screen += '\n' + colors.dim('Start typing to search conversations...') + '\n';
-    }
+      
+      console.log(colors.dim('\n[↑↓] Navigate  [Enter] Select  [Esc] Exit'));
+    };
     
-    screen += '\n' + colors.dim('[↑↓] Navigate  [Enter] Select  [Esc] Exit  [Backspace] Delete') + '\n';
+    // Debounced search to prevent excessive API calls
+    const performSearch = debounce(async () => {
+      if (searchTerm.length >= 2) {
+        isSearching = true;
+        await displayScreen();
+        
+        try {
+          results = await extractor.searchConversations(searchTerm, conversations);
+          selectedIndex = 0;
+        } catch (error) {
+          results = [];
+        }
+        
+        isSearching = false;
+        await displayScreen();
+      }
+    }, 150);
     
-    // Write entire screen at once to prevent flicker
-    process.stdout.write(screen);
-  };
-  
-  return new Promise((resolve) => {
     const handleKeypress = async (str, key) => {
       if (key && key.name === 'escape') {
         cleanup();
@@ -219,19 +250,31 @@ async function showLiveSearch() {
           resolve(results[selectedIndex].file);
         }
       } else if (key && key.name === 'up') {
-        selectedIndex = Math.max(0, selectedIndex - 1);
-        await drawScreen();
+        if (results.length > 0) {
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          await displayScreen();
+        }
       } else if (key && key.name === 'down') {
-        selectedIndex = Math.min(Math.max(0, results.length - 1), selectedIndex + 1);
-        await drawScreen();
+        if (results.length > 0) {
+          selectedIndex = Math.min(results.length - 1, selectedIndex + 1);
+          await displayScreen();
+        }
       } else if (key && key.name === 'backspace') {
         searchTerm = searchTerm.slice(0, -1);
         selectedIndex = 0;
-        await drawScreen();
+        if (searchTerm.length >= 2) {
+          performSearch();
+        } else {
+          results = [];
+          await displayScreen();
+        }
       } else if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
         searchTerm += str;
         selectedIndex = 0;
-        await drawScreen();
+        await displayScreen();
+        if (searchTerm.length >= 2) {
+          performSearch();
+        }
       }
     };
     
@@ -243,11 +286,11 @@ async function showLiveSearch() {
       rl.close();
     };
     
-    readline.emitKeypressEvents(process.stdin);
+    // Set up event listener
     process.stdin.on('keypress', handleKeypress);
     
-    // Initial render
-    drawScreen();
+    // Initial display
+    displayScreen();
   });
 }
 
@@ -257,7 +300,6 @@ async function showConversationActions(conversation) {
   console.log(colors.primary('\n📄 Conversation Details\n'));
   console.log(colors.dim(`Project: ${conversation.project}`));
   console.log(colors.dim(`File: ${conversation.name}`));
-  console.log(colors.dim(`Path: ${conversation.path}`));
   console.log(colors.dim(`Modified: ${conversation.modified.toLocaleString()}`));
   console.log(colors.dim(`Size: ${(conversation.size / 1024).toFixed(1)} KB\n`));
   
@@ -280,13 +322,13 @@ async function showConversationActions(conversation) {
   switch (action) {
     case 'copy':
       console.log(colors.success(`\n📋 File path:\n${colors.highlight(conversation.path)}`));
-      await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+      await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
       await showConversationActions(conversation);
       break;
       
     case 'location':
       console.log(colors.info(`\n📂 Location:\n${colors.highlight(conversation.path)}`));
-      await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+      await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
       await showConversationActions(conversation);
       break;
       
@@ -295,12 +337,12 @@ async function showConversationActions(conversation) {
         const content = await readFile(conversation.path, 'utf-8');
         const contextPath = join(process.cwd(), `claude-context-${conversation.project}.md`);
         await require('fs').promises.writeFile(contextPath, `# Claude Context\n\n**Project:** ${conversation.project}\n**File:** ${conversation.name}\n\n---\n\n${content}`);
-        console.log(colors.success(`\n🚀 Context created:\n${colors.highlight(contextPath)}`));
-        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+        console.log(colors.success(`\n🚀 Context file created:\n${colors.highlight(contextPath)}`));
+        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
         await showConversationActions(conversation);
       } catch (error) {
         console.log(colors.error('❌ Error creating context file'));
-        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
         await showConversationActions(conversation);
       }
       break;
