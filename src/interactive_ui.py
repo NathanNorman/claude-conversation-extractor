@@ -276,6 +276,14 @@ class InteractiveUI:
         try:
             result = self.search_conversations()
             print(f"📊 Search returned: {result}")
+
+            # If result is [-1], it means "return to menu"
+            if result == [-1]:
+                print("🔄 Returning to sessions menu...")
+                input("Press Enter to continue...")
+                # Recursively show the sessions menu again
+                return self.show_sessions_menu()
+
             return result
         except Exception as e:
             print(f"❌ Search error: {e}")
@@ -290,16 +298,26 @@ class InteractiveUI:
             enhanced = EnhancedSearch(self.searcher, self.extractor)
             selected_file = enhanced.run()
 
+            print(f"🔍 Enhanced search completed. Selected file: {selected_file}")
+
             # The EnhancedSearch handles all interaction internally
-            # It returns the selected file if the user extracted it
+            # If they used the search and didn't select anything, go back to menu
+            if selected_file is None:
+                print("🔄 No file selected, returning to menu...")
+                # Return a special marker to indicate "return to menu" instead of quit
+                return [-1]  # Special marker to go back to sessions menu
+
+            # If they selected a file, try to find its index
             if selected_file:
                 try:
                     index = self.sessions.index(Path(selected_file))
+                    print(f"✅ Found session at index {index}")
                     return [index]
                 except ValueError:
-                    # File may have been viewed but not extracted
-                    pass
-            return []
+                    print("⚠️  File selected but not in sessions list")
+                    return [-1]  # Return to menu
+
+            return [-1]  # Return to menu
         else:
             # Fall back to basic real-time search
             smart_searcher = create_smart_searcher(self.searcher)
