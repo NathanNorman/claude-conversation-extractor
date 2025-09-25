@@ -88,26 +88,15 @@ class InteractiveUI:
             Path.cwd() / "claude_conversations",
         ]
 
-        print("Suggested locations:")
-        for i, path in enumerate(suggestions, 1):
-            print(f"  {i}. {path}")
+        # Create menu options for folder selection
+        folder_options = []
+        for i, path in enumerate(suggestions):
+            folder_options.append((f"{path}", str(i + 1), lambda p=path: p))
 
-        print("\n  C. Custom location")
-        print("  Q. Quit")
+        folder_options.append(("Custom location", "C", self._handle_custom_location))
+        folder_options.append(("Quit", "Q", lambda: None))
 
-        while True:
-            choice = input("\nSelect an option (1-4, C, or Q): ").strip().upper()
-
-            if choice == "Q":
-                return None
-            elif choice == "C":
-                custom_path = input("\nEnter custom path: ").strip()
-                if custom_path:
-                    return Path(custom_path).expanduser()
-            elif choice.isdigit() and 1 <= int(choice) <= len(suggestions):
-                return suggestions[int(choice) - 1]
-            else:
-                print("❌ Invalid choice. Please try again.")
+        return self._show_interactive_menu(folder_options, is_folder_menu=True)
 
     def show_sessions_menu(self) -> List[int]:
         """Display sessions and let user select which to extract"""
@@ -162,7 +151,14 @@ class InteractiveUI:
 
         print(f"\r[{bar}] {current}/{total} {message}", end="", flush=True)
 
-    def _show_interactive_menu(self, menu_options: List[tuple]) -> List[int]:
+    def _handle_custom_location(self):
+        """Handle custom folder location input"""
+        custom_path = input("\nEnter custom path: ").strip()
+        if custom_path:
+            return Path(custom_path).expanduser()
+        return None
+
+    def _show_interactive_menu(self, menu_options: List[tuple], is_folder_menu: bool = False):
         """Display interactive menu with arrow key navigation"""
         try:
             # Test if we can import terminal modules (Unix-like systems)
@@ -177,7 +173,11 @@ class InteractiveUI:
         while True:
             # Clear previous menu and redraw
             print("\n" + "=" * 60)
-            print("\n📋 Choose an action (use ↑↓ arrows, Enter to select):")
+
+            if is_folder_menu:
+                print("\n📋 Choose a folder (use ↑↓ arrows, Enter to select):")
+            else:
+                print("\n📋 Choose an action (use ↑↓ arrows, Enter to select):")
 
             for i, (description, key, _) in enumerate(menu_options):
                 if i == selected_index:
@@ -208,18 +208,22 @@ class InteractiveUI:
             # Clear screen for next iteration
             print("\033[2J\033[H", end="")
             self.print_banner()
-            print(f"\n✅ Found {len(self.sessions)} conversations!\n")
 
-            # Redraw session list
-            for i, session_path in enumerate(self.sessions[:20], 1):
-                project = session_path.parent.name
-                modified = datetime.fromtimestamp(session_path.stat().st_mtime)
-                size_kb = session_path.stat().st_size / 1024
-                date_str = modified.strftime("%Y-%m-%d %H:%M")
-                print(f"  {i:2d}. [{date_str}] {project[:30]:<30} ({size_kb:.1f} KB)")
+            if is_folder_menu:
+                print("\n📁 Where would you like to save your conversations?\n")
+            else:
+                print(f"\n✅ Found {len(self.sessions)} conversations!\n")
 
-            if len(self.sessions) > 20:
-                print(f"\n  ... and {len(self.sessions) - 20} more conversations")
+                # Redraw session list
+                for i, session_path in enumerate(self.sessions[:20], 1):
+                    project = session_path.parent.name
+                    modified = datetime.fromtimestamp(session_path.stat().st_mtime)
+                    size_kb = session_path.stat().st_size / 1024
+                    date_str = modified.strftime("%Y-%m-%d %H:%M")
+                    print(f"  {i:2d}. [{date_str}] {project[:30]:<30} ({size_kb:.1f} KB)")
+
+                if len(self.sessions) > 20:
+                    print(f"\n  ... and {len(self.sessions) - 20} more conversations")
 
     def _show_text_menu(self, menu_options: List[tuple]) -> List[int]:
         """Fallback text-based menu for Windows/non-terminal environments"""
