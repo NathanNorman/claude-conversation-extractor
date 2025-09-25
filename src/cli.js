@@ -116,7 +116,7 @@ class ClaudeConversationExtractor {
             file: conversation,
             matches: matchCount,
             previews: previews,
-            relevance: Math.min(1.0, matchCount / Math.max(lines.length, 10)) // Ensure relevance > 0
+            relevance: Math.max(0.01, Math.min(1.0, (matchCount * 10) / Math.max(lines.length, 1))) // Fix relevance calculation
           });
         }
       } catch (error) {
@@ -194,40 +194,122 @@ async function showLiveSearchInterface() {
     });
   };
   
-  // Use inquirer's autocomplete-style prompt
-  try {
-    // Try to use inquirer-autocomplete-prompt for live search
-    const AutocompletePrompt = await import('inquirer-autocomplete-prompt').catch(() => null);
+  // Live search interface - true live search as you type
+  let searchTerm = '';
+  let results = [];
+  let selectedIndex = 0;
+  
+  // Set up readline for raw input
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
+  
+  const render = async () => {
+    console.clear();
     
-    if (AutocompletePrompt?.default) {
-      inquirer.registerPrompt('autocomplete', AutocompletePrompt.default);
+    // Banner
+    console.log(colors.accent(`
+ ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
+██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
+██║     ██║     ███████║██║   ██║██║  ██║█████╗  
+██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝  
+╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝
+    `));
+    
+    console.log(colors.primary('        🔍 Interactive Conversation Search\n'));
+    console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
+    
+    // Search box
+    console.log(colors.primary('🔍 Search: ') + colors.highlight(searchTerm) + colors.dim('_'));
+    
+    if (searchTerm.length >= 2) {
+      results = await extractor.searchConversations(searchTerm, conversations);
       
-      const { selectedConversation } = await inquirer.prompt([
-        {
-          type: 'autocomplete',
-          name: 'selectedConversation',
-          message: colors.primary('🔍 Search conversations (live results):'),
-          source: async (answersSoFar, input) => {
-            return await createSearchChoices(input);
-          },
-          pageSize: 8,
-          suggestOnly: false
+      if (results.length === 0) {
+        console.log(colors.warning('\n❌ No matches found'));
+      } else {
+        console.log(colors.info(`\n📋 Found ${results.length} matches:\n`));
+        
+        // Show results
+        results.slice(0, 8).forEach((result, index) => {
+          const isSelected = index === selectedIndex;
+          const date = result.file.modified.toLocaleDateString();
+          const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          const project = result.file.project.slice(0, 20);
+          const relevance = (result.relevance * 100).toFixed(0);
+          const preview = result.previews[0] || 'No preview';
+          
+          const cursor = isSelected ? colors.accent('▶ ') : '  ';
+          const line = `${cursor}${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)} ${colors.accent('│')} ${colors.success(relevance + '%')}`;
+          console.log(line);
+          
+          if (isSelected) {
+            console.log(colors.subdued(`    ${preview.slice(0, 60)}...`));
+          }
+        });
+        
+        if (results.length > 8) {
+          console.log(colors.dim(`\n    ... and ${results.length - 8} more results`));
         }
-      ]);
-      
-      if (selectedConversation) {
-        await showConversationActions(selectedConversation);
       }
-      
-    } else {
-      // Fallback to manual search
-      await showManualSearch(extractor, conversations);
+    } else if (searchTerm.length > 0) {
+      console.log(colors.dim('\nType at least 2 characters to search...'));
     }
     
-  } catch (error) {
-    // Fallback to manual search
-    await showManualSearch(extractor, conversations);
-  }
+    console.log(colors.dim('\n[↑↓] Navigate  [Enter] Select  [Esc] Exit  [Backspace] Delete'));
+  };
+  
+  return new Promise((resolve) => {
+    const handleKeypress = async (str, key) => {
+      if (key && key.name === 'escape') {
+        cleanup();
+        resolve(null);
+      } else if (key && key.name === 'return') {
+        if (results.length > 0 && selectedIndex < results.length) {
+          cleanup();
+          resolve(results[selectedIndex].file);
+        }
+      } else if (key && key.name === 'up') {
+        selectedIndex = Math.max(0, selectedIndex - 1);
+        await render();
+      } else if (key && key.name === 'down') {
+        selectedIndex = Math.min(results.length - 1, selectedIndex + 1);
+        await render();
+      } else if (key && key.name === 'backspace') {
+        searchTerm = searchTerm.slice(0, -1);
+        selectedIndex = 0;
+        await render();
+      } else if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
+        searchTerm += str;
+        selectedIndex = 0;
+        await render();
+      }
+    };
+    
+    const cleanup = () => {
+      process.stdin.removeListener('keypress', handleKeypress);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      rl.close();
+    };
+    
+    readline.emitKeypressEvents(process.stdin);
+    process.stdin.on('keypress', handleKeypress);
+    
+    // Initial render
+    render();
+  }).then(async (selectedConversation) => {
+    if (selectedConversation) {
+      await showConversationActions(selectedConversation);
+    }
+  });
 }
 
 async function showManualSearch(extractor, conversations) {
