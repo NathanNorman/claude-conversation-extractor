@@ -126,7 +126,8 @@ class ClaudeConversationExtractor:
                                 conversation.append(
                                     {
                                         "role": "tool_use",
-                                        "content": f"🔧 Tool: {tool_name}\nInput: {json.dumps(tool_input, indent=2)}",
+                                        "content": f"🔧 Tool: {tool_name}\n"
+                                        f"Input: {json.dumps(tool_input, indent=2)}",
                                         "timestamp": entry.get("timestamp", ""),
                                     }
                                 )
@@ -321,39 +322,43 @@ class ClaudeConversationExtractor:
         filename = f"claude-conversation-{date_str}-{session_id[:8]}.md"
         output_path = self.output_dir / filename
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("# Claude Conversation Log\n\n")
-            f.write(f"Session ID: {session_id}\n")
-            f.write(f"Date: {date_str}")
-            if time_str:
-                f.write(f" {time_str}")
-            f.write("\n\n---\n\n")
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("# Claude Conversation Log\n\n")
+                f.write(f"Session ID: {session_id}\n")
+                f.write(f"Date: {date_str}")
+                if time_str:
+                    f.write(f" {time_str}")
+                f.write("\n\n---\n\n")
 
-            for msg in conversation:
-                role = msg["role"]
-                content = msg["content"]
+                for msg in conversation:
+                    role = msg["role"]
+                    content = msg["content"]
 
-                if role == "user":
-                    f.write("## 👤 User\n\n")
-                    f.write(f"{content}\n\n")
-                elif role == "assistant":
-                    f.write("## 🤖 Claude\n\n")
-                    f.write(f"{content}\n\n")
-                elif role == "tool_use":
-                    f.write("### 🔧 Tool Use\n\n")
-                    f.write(f"{content}\n\n")
-                elif role == "tool_result":
-                    f.write("### 📤 Tool Result\n\n")
-                    f.write(f"{content}\n\n")
-                elif role == "system":
-                    f.write("### ℹ️ System\n\n")
-                    f.write(f"{content}\n\n")
-                else:
-                    f.write(f"## {role}\n\n")
-                    f.write(f"{content}\n\n")
-                f.write("---\n\n")
+                    if role == "user":
+                        f.write("## 👤 User\n\n")
+                        f.write(f"{content}\n\n")
+                    elif role == "assistant":
+                        f.write("## 🤖 Claude\n\n")
+                        f.write(f"{content}\n\n")
+                    elif role == "tool_use":
+                        f.write("### 🔧 Tool Use\n\n")
+                        f.write(f"{content}\n\n")
+                    elif role == "tool_result":
+                        f.write("### 📤 Tool Result\n\n")
+                        f.write(f"{content}\n\n")
+                    elif role == "system":
+                        f.write("### ℹ️ System\n\n")
+                        f.write(f"{content}\n\n")
+                    else:
+                        f.write(f"## {role}\n\n")
+                        f.write(f"{content}\n\n")
+                    f.write("---\n\n")
 
-        return output_path
+            return output_path
+        except (IOError, OSError) as e:
+            print(f"❌ Error writing file {output_path}: {e}")
+            return None
 
     def save_as_json(
         self, conversation: List[Dict[str, str]], session_id: str
@@ -858,7 +863,12 @@ Examples:
     if args.search or args.search_regex:
         from datetime import datetime
 
-        from search_conversations import ConversationSearcher
+        try:
+            from search_conversations import ConversationSearcher
+        except ImportError:
+            print("❌ Error: Search functionality not available.")
+            print("Please ensure the package is properly installed.")
+            return
 
         searcher = ConversationSearcher()
 
@@ -1050,11 +1060,19 @@ def launch_interactive():
 
     # If no arguments provided, launch interactive UI
     if len(sys.argv) == 1:
+        interactive_main = None
         try:
             from .interactive_ui import main as interactive_main
         except ImportError:
-            from interactive_ui import main as interactive_main
-        interactive_main()
+            try:
+                from interactive_ui import main as interactive_main
+            except ImportError:
+                print("❌ Error: Interactive UI module not available.")
+                print("Please ensure the package is properly installed.")
+                sys.exit(1)
+
+        if interactive_main:
+            interactive_main()
     # Check if 'search' was passed as an argument
     elif len(sys.argv) > 1 and sys.argv[1] == "search":
         # Launch real-time search with viewing capability
@@ -1062,8 +1080,13 @@ def launch_interactive():
             from .realtime_search import RealTimeSearch, create_smart_searcher
             from .search_conversations import ConversationSearcher
         except ImportError:
-            from realtime_search import RealTimeSearch, create_smart_searcher
-            from search_conversations import ConversationSearcher
+            try:
+                from realtime_search import RealTimeSearch, create_smart_searcher
+                from search_conversations import ConversationSearcher
+            except ImportError:
+                print("❌ Error: Search modules not available.")
+                print("Please ensure the package is properly installed.")
+                sys.exit(1)
 
         # Initialize components
         extractor = ClaudeConversationExtractor()

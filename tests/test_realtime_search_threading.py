@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 sys.path.append(str(Path(__file__).parent.parent))
 
 # Local imports after sys.path modification
-from realtime_search import RealTimeSearch  # noqa: E402
+from src.realtime_search import RealTimeSearch  # noqa: E402
 
 
 class TestRealTimeSearchThreading(unittest.TestCase):

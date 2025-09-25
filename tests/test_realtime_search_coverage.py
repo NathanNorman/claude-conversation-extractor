@@ -144,49 +144,86 @@ class TestKeyboardHandlerCoverage(unittest.TestCase):
     @patch("sys.platform", "linux")
     def test_unix_keyboard_special_sequences(self):
         """Test Unix escape sequences"""
-        with patch("sys.stdin.fileno", return_value=0), patch(
-            "realtime_search.select"
+        with patch("src.realtime_search.termios"), patch("src.realtime_search.tty"), patch(
+            "src.realtime_search.select"
         ) as mock_select, patch("sys.stdin") as mock_stdin:
 
+            # Mock stdin.fileno() to return 0
+            mock_stdin.fileno.return_value = 0
             handler = KeyboardHandler()
 
-            # Test escape sequences
-            test_cases = [
-                (["\x1b", "[A"], "UP"),
-                (["\x1b", "[B"], "DOWN"),
-                (["\x1b", "[C"], "RIGHT"),
-                (["\x1b", "[D"], "LEFT"),
-                (["\x1b"], "ESC"),  # Just escape
-                (["\r"], "ENTER"),
-                (["\n"], "ENTER"),
-                (["\x7f"], "BACKSPACE"),
-                (["\x08"], "BACKSPACE"),
+            # Test arrow keys
+            arrow_cases = [
+                ("\x1b", "UP", ["[", "A"]),
+                ("\x1b", "DOWN", ["[", "B"]),
+                ("\x1b", "RIGHT", ["[", "C"]),
+                ("\x1b", "LEFT", ["[", "D"]),
             ]
 
-            for sequence, expected in test_cases:
+            for first_char, expected, sequence_chars in arrow_cases:
                 with self.subTest(expected=expected):
-                    # Mock select to indicate data available
-                    mock_select.select.return_value = ([sys.stdin], [], [])
-
-                    # Mock stdin reads
-                    mock_stdin.read.side_effect = sequence
+                    # For arrow keys: first select returns True, next two return True, then False
+                    mock_select.select.side_effect = [
+                        ([mock_stdin], [], []),  # First select call
+                        ([mock_stdin], [], []),  # Second select call (check for '[')
+                        ([mock_stdin], [], []),  # Third select call (check for letter)
+                        ([], [], [])  # Fourth call returns False to break loop
+                    ]
+                    
+                    mock_stdin.read.side_effect = [first_char] + sequence_chars
 
                     result = handler.get_key()
                     self.assertEqual(result, expected)
 
                     # Reset mocks
+                    mock_select.select.reset_mock()
+                    mock_select.select.side_effect = None
+                    mock_stdin.read.reset_mock()
                     mock_stdin.read.side_effect = None
+
+            # Test simple keys
+            simple_cases = [
+                ("\x1b", "ESC"),  # Just escape
+                ("\r", "ENTER"),
+                ("\n", "ENTER"),
+                ("\x7f", "BACKSPACE"),
+                ("\x08", "BACKSPACE"),
+            ]
+
+            for char, expected in simple_cases:
+                with self.subTest(expected=expected):
+                    if char == "\x1b":
+                        # For ESC alone: first select returns True, second returns False
+                        mock_select.select.side_effect = [
+                            ([sys.stdin], [], []),  # First select call
+                            ([], [], [])  # Second call returns False (no more chars)
+                        ]
+                    else:
+                        # For simple chars: just one select call returns True
+                        mock_select.select.return_value = ([sys.stdin], [], [])
+                    
+                    mock_stdin.read.return_value = char
+
+                    result = handler.get_key()
+                    self.assertEqual(result, expected)
+
+                    # Reset mocks
+                    mock_select.select.reset_mock()
+                    mock_select.select.side_effect = None
+                    mock_stdin.read.reset_mock()
 
     @patch("sys.platform", "linux")
     def test_unix_keyboard_ctrl_c(self):
         """Test Ctrl+C handling"""
-        with patch("sys.stdin.fileno", return_value=0), patch(
-            "realtime_search.select"
+        with patch("src.realtime_search.termios"), patch("src.realtime_search.tty"), patch(
+            "src.realtime_search.select"
         ) as mock_select, patch("sys.stdin") as mock_stdin:
 
+            # Mock stdin.fileno() to return 0
+            mock_stdin.fileno.return_value = 0
             handler = KeyboardHandler()
 
-            mock_select.select.return_value = ([sys.stdin], [], [])
+            mock_select.select.return_value = ([mock_stdin], [], [])
             mock_stdin.read.return_value = "\x03"  # Ctrl+C
 
             with self.assertRaises(KeyboardInterrupt):
@@ -218,22 +255,22 @@ class TestTerminalDisplayCoverage(unittest.TestCase):
         """Test cursor movement operations"""
         # Move cursor
         self.display.move_cursor(5, 10)
-        mock_print.assert_called_with("\033[5;10H", end="")
+        mock_print.assert_called_with("\033[5;10H", end="", flush=True)
 
         # Clear line
         mock_print.reset_mock()
         self.display.clear_line()
-        mock_print.assert_called_with("\033[2K", end="")
+        mock_print.assert_called_with("\033[2K", end="", flush=True)
 
         # Save cursor
         mock_print.reset_mock()
         self.display.save_cursor()
-        mock_print.assert_called_with("\033[s", end="")
+        mock_print.assert_called_with("\033[s", end="", flush=True)
 
         # Restore cursor
         mock_print.reset_mock()
         self.display.restore_cursor()
-        mock_print.assert_called_with("\033[u", end="")
+        mock_print.assert_called_with("\033[u", end="", flush=True)
 
     @patch("builtins.print")
     def test_draw_results_with_query_no_match(self, mock_print):
