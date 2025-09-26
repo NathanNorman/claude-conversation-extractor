@@ -98,3 +98,4 @@ claude_ui/
 
 # Node.js dependencies
 node_modules/
+.claude-work/

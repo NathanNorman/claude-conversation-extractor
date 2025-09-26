@@ -9,11 +9,14 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "echo 'No tests configured yet'",
-    "lint": "echo 'No linting configured yet'", 
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "lint": "eslint src/**/*.js",
     "typecheck": "echo 'No typechecking configured yet'",
     "build": "echo 'Build not needed for JS version'",
-    "dev": "node src/cli.js"
+    "dev": "node src/cli.js",
+    "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
+    "lint:fix": "eslint src/**/*.js --fix"
   },
   "dependencies": {
     "boxen": "^5.1.2",
@@ -25,8 +28,12 @@
     "ora": "^5.4.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@jest/globals": "^30.1.2",
     "@types/inquirer": "^9.0.7",
     "@types/node": "^22.9.3",
+    "eslint": "^9.36.0",
+    "jest": "^30.1.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2"
   },

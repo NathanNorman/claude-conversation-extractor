@@ -6,6 +6,11 @@ import { readdir, stat, readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import readline from 'readline';
+import { SetupManager } from './setup/setup-manager.js';
+import { showSetupMenu, showAnalytics, confirmExportLocation } from './setup/setup-menu.js';
+import { BulkExtractor } from './setup/bulk-extractor.js';
+import { IndexBuilder } from './setup/index-builder.js';
+import { IndexedSearch } from './search/indexed-search.js';
 
 // Vibe-log style colors
 const colors = {
@@ -146,7 +151,7 @@ class ClaudeConversationExtractor {
 }
 
 // Proper live search interface using readline best practices
-async function showLiveSearch() {
+async function showLiveSearch(searchInterface = null) {
   const extractor = new ClaudeConversationExtractor();
   const conversations = await extractor.findConversations();
   
@@ -205,9 +210,11 @@ async function showLiveSearch() {
           // Show top 5 results
           results.slice(0, 5).forEach((result, index) => {
             const isSelected = index === selectedIndex;
-            const date = result.file.modified.toLocaleDateString();
-            const time = result.file.modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-            const project = result.file.project.slice(0, 30);
+            // Handle both basic search (result.file) and indexed search (direct properties)
+            const modified = result.file?.modified || (result.modified ? new Date(result.modified) : new Date());
+            const date = modified.toLocaleDateString();
+            const time = modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const project = (result.file?.project || result.project || '').slice(0, 30);
             const relevance = Math.max(1, Math.round(result.relevance * 100));
             
             const cursor = isSelected ? colors.accent('▶ ') : '  ';
@@ -257,10 +264,23 @@ async function showLiveSearch() {
         await displayScreen();
         
         try {
-          results = await extractor.searchConversations(searchTerm, conversations);
+          // Use indexed search if available, otherwise fall back to basic search
+          if (searchInterface) {
+            const searchResult = await searchInterface.search(searchTerm);
+            results = searchResult.results.map(r => ({
+              ...r,
+              name: r.exportedFile ? r.exportedFile.split('/').pop() : 'conversation.jsonl',
+              path: r.originalPath,
+              size: 0, // Size not tracked in index
+              preview: r.preview.replace(/\[HIGHLIGHT\]/g, '').replace(/\[\/HIGHLIGHT\]/g, '')
+            }));
+          } else {
+            results = await extractor.searchConversations(searchTerm, conversations);
+          }
           selectedIndex = 0;
         } catch (error) {
           results = [];
+          console.error('Search error:', error);
         }
         
         isSearching = false;
@@ -275,7 +295,16 @@ async function showLiveSearch() {
       } else if (key && key.name === 'return') {
         if (results.length > 0 && selectedIndex < results.length) {
           cleanup();
-          resolve(results[selectedIndex].file);
+          // Handle both basic search (result.file) and indexed search (create file object)
+          const selected = results[selectedIndex];
+          const fileObject = selected.file || {
+            project: selected.project,
+            name: selected.name || selected.exportedFile?.split('/').pop() || 'conversation.jsonl',
+            path: selected.path || selected.originalPath,
+            modified: selected.modified ? new Date(selected.modified) : new Date(),
+            size: selected.size || 0
+          };
+          resolve(fileObject);
         }
       } else if (key && key.name === 'up') {
         if (results.length > 0) {
@@ -331,10 +360,10 @@ async function exportConversation(conversation) {
         name: 'exportLocation',
         message: 'Where would you like to export the conversation?',
         choices: [
-          { name: `📁 ~/.claude/claude_conversations/`, value: join(homedir(), '.claude', 'claude_conversations') },
-          { name: `📁 ~/Desktop/claude_conversations/`, value: join(homedir(), 'Desktop', 'claude_conversations') },
-          { name: `📁 Current directory`, value: process.cwd() },
-          { name: `📁 Custom location`, value: 'custom' }
+          { name: '📁 ~/.claude/claude_conversations/', value: join(homedir(), '.claude', 'claude_conversations') },
+          { name: '📁 ~/Desktop/claude_conversations/', value: join(homedir(), 'Desktop', 'claude_conversations') },
+          { name: '📁 Current directory', value: process.cwd() },
+          { name: '📁 Custom location', value: 'custom' }
         ]
       }
     ]);
@@ -359,11 +388,11 @@ async function exportConversation(conversation) {
     const content = await readFile(conversation.path, 'utf-8');
     const lines = content.split('\n').filter(line => line.trim());
     
-    let markdown = `# Claude Conversation\n\n`;
+    let markdown = '# Claude Conversation\n\n';
     markdown += `**Project:** ${conversation.project}\n`;
     markdown += `**Date:** ${conversation.modified.toLocaleString()}\n`;
     markdown += `**File:** ${conversation.name}\n\n`;
-    markdown += `---\n\n`;
+    markdown += '---\n\n';
     
     for (const line of lines) {
       try {
@@ -390,7 +419,7 @@ async function exportConversation(conversation) {
     const outputPath = join(outputDir, fileName);
     await require('fs').promises.writeFile(outputPath, markdown);
     
-    console.log(colors.success(`\n📤 Conversation exported successfully!`));
+    console.log(colors.success('\n📤 Conversation exported successfully!'));
     console.log(colors.highlight(`📄 File: ${outputPath}`));
     console.log(colors.dim(`📊 Size: ${(markdown.length / 1024).toFixed(1)} KB`));
     
@@ -428,55 +457,136 @@ async function showConversationActions(conversation) {
   ]);
   
   switch (action) {
-    case 'export':
-      await exportConversation(conversation);
-      await showConversationActions(conversation);
-      break;
+  case 'export':
+    await exportConversation(conversation);
+    await showConversationActions(conversation);
+    break;
       
-    case 'copy':
-      console.log(colors.success(`\n📋 File path:\n${colors.highlight(conversation.path)}`));
+  case 'copy':
+    console.log(colors.success(`\n📋 File path:\n${colors.highlight(conversation.path)}`));
+    await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
+    await showConversationActions(conversation);
+    break;
+      
+  case 'location':
+    console.log(colors.info(`\n📂 Location:\n${colors.highlight(conversation.path)}`));
+    await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
+    await showConversationActions(conversation);
+    break;
+      
+  case 'context':
+    try {
+      const content = await readFile(conversation.path, 'utf-8');
+      const contextPath = join(process.cwd(), `claude-context-${conversation.project}.md`);
+      await require('fs').promises.writeFile(contextPath, `# Claude Context\n\n**Project:** ${conversation.project}\n**File:** ${conversation.name}\n\n---\n\n${content}`);
+      console.log(colors.success(`\n🚀 Context file created:\n${colors.highlight(contextPath)}`));
       await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
       await showConversationActions(conversation);
-      break;
-      
-    case 'location':
-      console.log(colors.info(`\n📂 Location:\n${colors.highlight(conversation.path)}`));
+    } catch (error) {
+      console.log(colors.error('❌ Error creating context file'));
       await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
       await showConversationActions(conversation);
-      break;
+    }
+    break;
       
-    case 'context':
-      try {
-        const content = await readFile(conversation.path, 'utf-8');
-        const contextPath = join(process.cwd(), `claude-context-${conversation.project}.md`);
-        await require('fs').promises.writeFile(contextPath, `# Claude Context\n\n**Project:** ${conversation.project}\n**File:** ${conversation.name}\n\n---\n\n${content}`);
-        console.log(colors.success(`\n🚀 Context file created:\n${colors.highlight(contextPath)}`));
-        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
-        await showConversationActions(conversation);
-      } catch (error) {
-        console.log(colors.error('❌ Error creating context file'));
-        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
-        await showConversationActions(conversation);
-      }
-      break;
+  case 'back':
+    const selected = await showLiveSearch();
+    if (selected) {
+      await showConversationActions(selected);
+    }
+    break;
       
-    case 'back':
-      const selected = await showLiveSearch();
-      if (selected) {
-        await showConversationActions(selected);
-      }
-      break;
-      
-    case 'exit':
-      console.log(colors.dim('\nGoodbye! 👋'));
-      process.exit(0);
+  case 'exit':
+    console.log(colors.dim('\nGoodbye! 👋'));
+    process.exit(0);
   }
 }
 
 async function main() {
   console.clear();
   
-  const selectedConversation = await showLiveSearch();
+  // Initialize setup manager
+  const setupManager = new SetupManager();
+  const status = await setupManager.getSetupStatus();
+  
+  // Check if index-based search is available
+  let searchInterface = null;
+  
+  // Show setup menu if needed
+  if (status.isFirstTime || status.needsSetup) {
+    const setupChoice = await showSetupMenu(status);
+    
+    switch (setupChoice) {
+    case 'quick_setup':
+      // Extract all conversations
+      if (status.needsExtraction) {
+        const extractor = new BulkExtractor();
+        await extractor.extractAllConversations(status.conversations, status.exportLocation);
+        await setupManager.markExtractComplete(status.conversations.length);
+      }
+        
+      // Build search index
+      if (status.needsIndexing) {
+        const indexBuilder = new IndexBuilder();
+        await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
+        await setupManager.markIndexComplete(status.conversations.length);
+      }
+        
+      await setupManager.markSetupComplete();
+      searchInterface = new IndexedSearch();
+      break;
+        
+    case 'extract_only':
+      const extractor = new BulkExtractor();
+      await extractor.extractAllConversations(status.conversations, status.exportLocation);
+      await setupManager.markExtractComplete(status.conversations.length);
+      break;
+        
+    case 'index_only':
+      const indexBuilder = new IndexBuilder();
+      await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
+      await setupManager.markIndexComplete(status.conversations.length);
+      searchInterface = new IndexedSearch();
+      break;
+        
+    case 'change_location':
+      const newLocation = await confirmExportLocation();
+      await setupManager.updateExportLocation(newLocation);
+      // Re-run main to show updated menu
+      return main();
+        
+    case 'view_analytics':
+      await showAnalytics(status);
+      // Re-run main to return to menu
+      return main();
+        
+    case 'skip_setup':
+      console.log(colors.warning('\n⚠️  Using basic search mode (slower)\n'));
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      break;
+        
+    case 'exit':
+      console.log(colors.dim('\nGoodbye! 👋'));
+      process.exit(0);
+    }
+  }
+  
+  // Check again if we have index after setup
+  if (!searchInterface && status.indexBuilt) {
+    searchInterface = new IndexedSearch();
+  }
+  
+  // Show search mode indicator
+  if (searchInterface) {
+    console.log(colors.success('⚡ Using indexed search (fast mode)\n'));
+  } else {
+    console.log(colors.warning('🐢 Using basic search (consider running setup for 25x faster searches)\n'));
+  }
+  
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // Launch search interface
+  const selectedConversation = await showLiveSearch(searchInterface);
   if (selectedConversation) {
     await showConversationActions(selectedConversation);
   } else {

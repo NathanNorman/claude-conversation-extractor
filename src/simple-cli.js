@@ -237,36 +237,36 @@ async function main() {
       ]);
       
       switch (action) {
-        case 'copy':
-          console.log(colors.success(`\n📋 File path:\n${colors.highlight(selectedConversation.path)}`));
-          console.log(colors.dim('\n(Select the path above to copy it)'));
+      case 'copy':
+        console.log(colors.success(`\n📋 File path:\n${colors.highlight(selectedConversation.path)}`));
+        console.log(colors.dim('\n(Select the path above to copy it)'));
+        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+        break;
+          
+      case 'location':
+        console.log(colors.info(`\n📂 File location:\n${colors.highlight(selectedConversation.path)}`));
+        await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+        break;
+          
+      case 'context':
+        try {
+          const content = await readFile(selectedConversation.path, 'utf-8');
+          const contextPath = join(process.cwd(), `claude-context-${selectedConversation.project}.md`);
+          await require('fs').promises.writeFile(contextPath, `# Claude Context\n\n**Project:** ${selectedConversation.project}\n**File:** ${selectedConversation.name}\n\n---\n\n${content}`);
+          console.log(colors.success(`\n🚀 Context file created:\n${colors.highlight(contextPath)}`));
           await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
-          break;
-          
-        case 'location':
-          console.log(colors.info(`\n📂 File location:\n${colors.highlight(selectedConversation.path)}`));
+        } catch (error) {
+          console.log(colors.error('❌ Error creating context file'));
           await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
-          break;
+        }
+        break;
           
-        case 'context':
-          try {
-            const content = await readFile(selectedConversation.path, 'utf-8');
-            const contextPath = join(process.cwd(), `claude-context-${selectedConversation.project}.md`);
-            await require('fs').promises.writeFile(contextPath, `# Claude Context\n\n**Project:** ${selectedConversation.project}\n**File:** ${selectedConversation.name}\n\n---\n\n${content}`);
-            console.log(colors.success(`\n🚀 Context file created:\n${colors.highlight(contextPath)}`));
-            await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
-          } catch (error) {
-            console.log(colors.error('❌ Error creating context file'));
-            await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
-          }
-          break;
+      case 'exit':
+        console.log(colors.dim('\nGoodbye! 👋'));
+        process.exit(0);
           
-        case 'exit':
-          console.log(colors.dim('\nGoodbye! 👋'));
-          process.exit(0);
-          
-        case 'back':
-          continue; // Go back to search
+      case 'back':
+        continue; // Go back to search
       }
     }
   }
