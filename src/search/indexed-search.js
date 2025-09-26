@@ -68,10 +68,11 @@ export class IndexedSearch {
         }
       }
       
-      // Also check for partial matches
-      for (const keyword in this.index.invertedIndex) {
-        if (keyword.includes(word)) {
-          for (const idx of this.index.invertedIndex[keyword].conversations) {
+      // Also check for words that START with the query word (for prefix matching)
+      // This allows "java" to match "javascript", "javabean", etc.
+      for (const indexedWord in this.index.invertedIndex) {
+        if (indexedWord.startsWith(word) && indexedWord !== word) {
+          for (const idx of this.index.invertedIndex[indexedWord].conversations) {
             candidateIndices.add(idx);
           }
         }

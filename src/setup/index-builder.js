@@ -153,7 +153,16 @@ export class IndexBuilder {
         return null;
       }
       
-      // Extract keywords
+      // Extract ALL unique words for complete indexing
+      const allWords = fullText.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(word => word.length > 1); // Index even 2-letter words
+      
+      // Get unique words for this conversation
+      const uniqueWords = [...new Set(allWords)];
+      
+      // Keep keyword extraction for relevance scoring
       const keywords = this.extractKeywords(fullText);
       const keywordFrequency = this.calculateKeywordFrequency(fullText);
       
@@ -184,7 +193,8 @@ export class IndexBuilder {
         topicTags: this.inferTopics(keywords, toolsUsed),
         preview,
         speakers: [...new Set(messages.map(m => m.role))],
-        toolsUsed: Array.from(toolsUsed)
+        toolsUsed: Array.from(toolsUsed),
+        allWords: uniqueWords  // Store ALL unique words for complete search
       };
     } catch (error) {
       console.error(`Error processing conversation ${conversation.project}:`, error);
@@ -285,17 +295,37 @@ export class IndexBuilder {
   }
 
   updateInvertedIndex(entry, conversationIndex) {
-    for (const keyword of entry.extractedKeywords) {
-      if (!this.index.invertedIndex[keyword]) {
-        this.index.invertedIndex[keyword] = {
-          conversations: [],
-          totalOccurrences: 0,
-          avgRelevance: 0
-        };
+    // Index ALL words from the conversation, not just keywords
+    if (entry.allWords) {
+      for (const word of entry.allWords) {
+        if (!this.index.invertedIndex[word]) {
+          this.index.invertedIndex[word] = {
+            conversations: [],
+            totalOccurrences: 0,
+            avgRelevance: 0
+          };
+        }
+        
+        // Only add if not already indexed for this conversation
+        if (!this.index.invertedIndex[word].conversations.includes(conversationIndex)) {
+          this.index.invertedIndex[word].conversations.push(conversationIndex);
+          this.index.invertedIndex[word].totalOccurrences += 1;
+        }
       }
-      
-      this.index.invertedIndex[keyword].conversations.push(conversationIndex);
-      this.index.invertedIndex[keyword].totalOccurrences += entry.keywordFrequency[keyword] || 1;
+    } else {
+      // Fallback to keywords if allWords not available (for old indexes)
+      for (const keyword of entry.extractedKeywords) {
+        if (!this.index.invertedIndex[keyword]) {
+          this.index.invertedIndex[keyword] = {
+            conversations: [],
+            totalOccurrences: 0,
+            avgRelevance: 0
+          };
+        }
+        
+        this.index.invertedIndex[keyword].conversations.push(conversationIndex);
+        this.index.invertedIndex[keyword].totalOccurrences += entry.keywordFrequency[keyword] || 1;
+      }
     }
   }
 
