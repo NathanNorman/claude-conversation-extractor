@@ -194,34 +194,29 @@ export class IndexedSearch {
         // Sort occurrences by position
         allOccurrences.sort((a, b) => a.index - b.index);
         
-        // Generate previews for each occurrence (with context)
+        // Generate first preview only (rest will be generated on-demand)
         const contextSize = 100; // Characters before and after
-        const previews = [];
+        let preview = conversation.preview;
         
-        // Generate more previews to allow better navigation (up to 20)
-        for (const occurrence of allOccurrences.slice(0, 20)) { // Increased limit for better navigation
-          const start = Math.max(0, occurrence.index - contextSize);
-          const end = Math.min(fullText.length, occurrence.index + occurrence.length + contextSize);
+        if (allOccurrences.length > 0) {
+          const firstOcc = allOccurrences[0];
+          const start = Math.max(0, firstOcc.index - contextSize);
+          const end = Math.min(fullText.length, firstOcc.index + firstOcc.length + contextSize);
           
-          let contextText = fullText.substring(start, end).trim();
+          preview = fullText.substring(start, end).trim();
           
           // Add ellipsis if truncated
-          if (start > 0) contextText = '...' + contextText;
-          if (end < fullText.length) contextText = contextText + '...';
+          if (start > 0) preview = '...' + preview;
+          if (end < fullText.length) preview = preview + '...';
           
-          // Highlight all matching words in this context
+          // Highlight all matching words
           for (const word of queryWords) {
             const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
-            contextText = contextText.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+            preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
           }
-          
-          previews.push(contextText);
         }
         
-        // Use the first occurrence preview as the main preview
-        const preview = previews.length > 0 ? previews[0] : conversation.preview;
-        
-        // Format the result with all occurrence data
+        // Format the result with occurrence data for on-demand preview generation
         enrichedResults.push({
           project: conversation.project,
           exportedFile: conversation.exportedFile,
@@ -230,8 +225,10 @@ export class IndexedSearch {
           messageCount: conversation.messageCount,
           relevance: result.relevance,
           preview: preview,
-          allPreviews: previews,  // All occurrence previews for navigation
-          currentPreviewIndex: 0,  // Track which preview is being shown
+          occurrences: allOccurrences,  // Store all occurrences for on-demand generation
+          fullText: fullText,  // Store full text for on-demand preview generation
+          queryWords: queryWords,  // Store query words for highlighting
+          currentOccurrenceIndex: 0,  // Track which occurrence is being shown
           totalOccurrences: allOccurrences.length,
           matchedWords: result.matchedWords,
           toolsUsed: conversation.toolsUsed,
@@ -256,8 +253,10 @@ export class IndexedSearch {
           messageCount: conversation.messageCount,
           relevance: result.relevance,
           preview: preview,
-          allPreviews: [preview],
-          currentPreviewIndex: 0,
+          occurrences: [],  // No occurrences in fallback
+          fullText: '',  // No full text available
+          queryWords: queryWords,
+          currentOccurrenceIndex: 0,
           totalOccurrences: 0,
           matchedWords: result.matchedWords,
           toolsUsed: conversation.toolsUsed,

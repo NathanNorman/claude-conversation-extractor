@@ -272,16 +272,9 @@ async function showLiveSearch(searchInterface = null) {
               // Show occurrence counter if there are multiple matches
               let contextHeader = 'Context:';
               if (result.totalOccurrences && result.totalOccurrences > 1) {
-                const currentMatch = (result.currentPreviewIndex || 0) + 1;
-                const availablePreviews = result.allPreviews ? result.allPreviews.length : 1;
-                
-                if (availablePreviews < result.totalOccurrences) {
-                  // We have more occurrences than previews
-                  contextHeader = `Context: Showing match ${currentMatch}/${availablePreviews} of ${result.totalOccurrences} total ${colors.dim('[←→ navigate]')}`;
-                } else {
-                  // All occurrences have previews
-                  contextHeader = `Context: Match ${currentMatch}/${result.totalOccurrences} ${colors.dim('[←→ navigate]')}`;
-                }
+                const currentMatch = (result.currentOccurrenceIndex || 0) + 1;
+                // Now we can navigate through ALL occurrences
+                contextHeader = `Context: Match ${currentMatch}/${result.totalOccurrences} ${colors.dim('[←→ navigate]')}`;
               } else if (result.totalOccurrences === 1) {
                 contextHeader = 'Context: Match 1/1';
               }
@@ -508,9 +501,27 @@ async function showLiveSearch(searchInterface = null) {
         // Navigate to next occurrence in selected conversation
         if (results.length > 0 && selectedIndex < results.length) {
           const result = results[selectedIndex];
-          if (result.allPreviews && result.allPreviews.length > 1) {
-            result.currentPreviewIndex = (result.currentPreviewIndex + 1) % result.allPreviews.length;
-            result.preview = result.allPreviews[result.currentPreviewIndex];
+          if (result.occurrences && result.occurrences.length > 1) {
+            // Move to next occurrence
+            result.currentOccurrenceIndex = (result.currentOccurrenceIndex + 1) % result.occurrences.length;
+            
+            // Generate preview for this occurrence on-demand
+            const occurrence = result.occurrences[result.currentOccurrenceIndex];
+            const contextSize = 100;
+            const start = Math.max(0, occurrence.index - contextSize);
+            const end = Math.min(result.fullText.length, occurrence.index + occurrence.length + contextSize);
+            
+            let preview = result.fullText.substring(start, end).trim();
+            if (start > 0) preview = '...' + preview;
+            if (end < result.fullText.length) preview = preview + '...';
+            
+            // Highlight matching words
+            for (const word of result.queryWords || []) {
+              const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+              preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+            }
+            
+            result.preview = preview;
             await displayScreen();
           }
         }
@@ -518,9 +529,27 @@ async function showLiveSearch(searchInterface = null) {
         // Navigate to previous occurrence in selected conversation
         if (results.length > 0 && selectedIndex < results.length) {
           const result = results[selectedIndex];
-          if (result.allPreviews && result.allPreviews.length > 1) {
-            result.currentPreviewIndex = (result.currentPreviewIndex - 1 + result.allPreviews.length) % result.allPreviews.length;
-            result.preview = result.allPreviews[result.currentPreviewIndex];
+          if (result.occurrences && result.occurrences.length > 1) {
+            // Move to previous occurrence
+            result.currentOccurrenceIndex = (result.currentOccurrenceIndex - 1 + result.occurrences.length) % result.occurrences.length;
+            
+            // Generate preview for this occurrence on-demand
+            const occurrence = result.occurrences[result.currentOccurrenceIndex];
+            const contextSize = 100;
+            const start = Math.max(0, occurrence.index - contextSize);
+            const end = Math.min(result.fullText.length, occurrence.index + occurrence.length + contextSize);
+            
+            let preview = result.fullText.substring(start, end).trim();
+            if (start > 0) preview = '...' + preview;
+            if (end < result.fullText.length) preview = preview + '...';
+            
+            // Highlight matching words
+            for (const word of result.queryWords || []) {
+              const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+              preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+            }
+            
+            result.preview = preview;
             await displayScreen();
           }
         }
