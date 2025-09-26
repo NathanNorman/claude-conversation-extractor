@@ -165,6 +165,11 @@ async function showLiveSearch(searchInterface = null) {
     let results = [];
     let selectedIndex = 0;
     let isSearching = false;
+    let activeFilters = {
+      repos: new Set(),  // Empty set means all repos
+      dateRange: null,   // Future: { from: Date, to: Date }
+    };
+    let showFilterMenu = false;
     
     // Create readline interface
     const rl = readline.createInterface({
@@ -194,6 +199,12 @@ async function showLiveSearch(searchInterface = null) {
       
       console.log(colors.primary('        🔍 Interactive Conversation Search'));
       console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
+      
+      // Display active filters
+      if (activeFilters.repos.size > 0) {
+        const repoList = Array.from(activeFilters.repos).join(', ');
+        console.log(colors.accent('🏷️  Filtering repos: ') + colors.highlight(repoList));
+      }
       
       // Search input
       console.log(colors.primary('🔍 Type to search: ') + colors.highlight(searchTerm) + colors.dim('│'));
@@ -282,7 +293,104 @@ async function showLiveSearch(searchInterface = null) {
         console.log(colors.dim('\nStart typing to search conversations...'));
       }
       
-      console.log(colors.dim('\n[↑↓] Navigate  [←→] Switch matches  [Enter] Select  [Esc] Exit'));
+      console.log(colors.dim('\n[↑↓] Navigate  [←→] Switch matches  [f] Filter  [Enter] Select  [Esc] Exit'));
+    };
+    
+    // Get all unique repos from conversations
+    const getAllRepos = () => {
+      const repos = new Set();
+      conversations.forEach(conv => {
+        if (conv.project) {
+          repos.add(conv.project);
+        }
+      });
+      return Array.from(repos).sort();
+    };
+    
+    // Show filter menu
+    const showFilterOptions = async () => {
+      // Clear screen and show filter menu
+      process.stdout.write('\u001b[H\u001b[2J');
+      console.log(colors.accent('\n🔧 Filter Options\n'));
+      
+      const filterTypes = [
+        { name: '📁 Filter by Repository', value: 'repo' },
+        { name: '📅 Filter by Date Range (coming soon)', value: 'date', disabled: true },
+        { name: '🧹 Clear All Filters', value: 'clear' },
+        { name: '← Back to Search', value: 'back' }
+      ];
+      
+      // Temporarily disable raw mode for inquirer
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      
+      const { filterType } = await inquirer.prompt([{
+        type: 'list',
+        name: 'filterType',
+        message: 'Choose filter type:',
+        choices: filterTypes.filter(f => !f.disabled)
+      }]);
+      
+      if (filterType === 'repo') {
+        await showRepoFilter();
+      } else if (filterType === 'clear') {
+        activeFilters.repos.clear();
+        activeFilters.dateRange = null;
+      }
+      
+      // Re-enable raw mode
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+      
+      // Refresh search with new filters
+      if (searchTerm.length >= 2) {
+        performSearch();
+      }
+      
+      return filterType !== 'back';
+    };
+    
+    // Show repo filter selection
+    const showRepoFilter = async () => {
+      const allRepos = getAllRepos();
+      
+      if (allRepos.length === 0) {
+        console.log(colors.warning('No repositories found'));
+        return;
+      }
+      
+      console.log(colors.primary('\n📁 Select Repositories to Filter:\n'));
+      console.log(colors.dim('(Use space to select, Enter to confirm)\n'));
+      
+      const { selectedRepos } = await inquirer.prompt([{
+        type: 'checkbox',
+        name: 'selectedRepos',
+        message: 'Select repositories:',
+        choices: allRepos.map(repo => ({
+          name: repo,
+          value: repo,
+          checked: activeFilters.repos.has(repo)
+        })),
+        pageSize: 15
+      }]);
+      
+      // Update active filters
+      activeFilters.repos.clear();
+      selectedRepos.forEach(repo => activeFilters.repos.add(repo));
+    };
+    
+    // Apply filters to results
+    const applyFilters = (searchResults) => {
+      if (activeFilters.repos.size === 0) {
+        return searchResults;
+      }
+      
+      return searchResults.filter(result => {
+        const project = result.project || result.file?.project;
+        return activeFilters.repos.has(project);
+      });
     };
     
     // Debounced search to prevent excessive API calls
@@ -293,9 +401,10 @@ async function showLiveSearch(searchInterface = null) {
         
         try {
           // Use indexed search if available, otherwise fall back to basic search
+          let searchResults;
           if (searchInterface) {
             const searchResult = await searchInterface.search(searchTerm);
-            results = searchResult.results.map(r => ({
+            searchResults = searchResult.results.map(r => ({
               ...r,
               name: r.exportedFile ? r.exportedFile.split('/').pop() : 'conversation.jsonl',
               path: r.originalPath,
@@ -303,8 +412,11 @@ async function showLiveSearch(searchInterface = null) {
               preview: r.preview  // Keep highlight markers for display
             }));
           } else {
-            results = await extractor.searchConversations(searchTerm, conversations);
+            searchResults = await extractor.searchConversations(searchTerm, conversations);
           }
+          
+          // Apply active filters
+          results = applyFilters(searchResults);
           selectedIndex = 0;
         } catch (error) {
           results = [];
@@ -364,6 +476,12 @@ async function showLiveSearch(searchInterface = null) {
             await displayScreen();
           }
         }
+      } else if (str === 'f' || str === 'F') {
+        // Open filter menu
+        process.stdin.removeListener('keypress', handleKeypress);
+        const continueSearch = await showFilterOptions();
+        process.stdin.on('keypress', handleKeypress);
+        await displayScreen();
       } else if (key && key.name === 'backspace') {
         searchTerm = searchTerm.slice(0, -1);
         selectedIndex = 0;
@@ -373,7 +491,7 @@ async function showLiveSearch(searchInterface = null) {
           results = [];
           await displayScreen();
         }
-      } else if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
+      } else if (str && str.length === 1 && str.charCodeAt(0) >= 32 && str !== 'f' && str !== 'F') {
         searchTerm += str;
         selectedIndex = 0;
         await displayScreen();
