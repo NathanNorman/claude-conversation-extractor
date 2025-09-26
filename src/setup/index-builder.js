@@ -99,10 +99,14 @@ export class IndexBuilder {
     console.log(colors.dim('\n   Press Enter to continue...'));
     await new Promise(resolve => {
       process.stdin.once('data', resolve);
-      process.stdin.setRawMode(true);
+      if (process.stdin.setRawMode) {
+        process.stdin.setRawMode(true);
+      }
       process.stdin.resume();
     });
-    process.stdin.setRawMode(false);
+    if (process.stdin.setRawMode) {
+      process.stdin.setRawMode(false);
+    }
     
     return {
       processed,
@@ -306,6 +310,11 @@ export class IndexBuilder {
           };
         }
         
+        // Ensure conversations array exists before checking includes
+        if (!this.index.invertedIndex[word].conversations) {
+          this.index.invertedIndex[word].conversations = [];
+        }
+        
         // Only add if not already indexed for this conversation
         if (!this.index.invertedIndex[word].conversations.includes(conversationIndex)) {
           this.index.invertedIndex[word].conversations.push(conversationIndex);
@@ -321,6 +330,11 @@ export class IndexBuilder {
             totalOccurrences: 0,
             avgRelevance: 0
           };
+        }
+        
+        // Ensure conversations array exists before using it
+        if (!this.index.invertedIndex[keyword].conversations) {
+          this.index.invertedIndex[keyword].conversations = [];
         }
         
         this.index.invertedIndex[keyword].conversations.push(conversationIndex);
