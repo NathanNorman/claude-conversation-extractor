@@ -316,7 +316,42 @@ async function showLiveSearch(searchInterface = null) {
       } else if (searchTerm.length > 0) {
         console.log(colors.dim('\nType at least 2 characters...'));
       } else {
-        console.log(colors.dim('\nStart typing to search conversations...'));
+        // Show filtered conversations when no search term
+        const filteredConversations = applyFilters(conversations.map(conv => ({
+          ...conv,
+          name: conv.project,
+          preview: '',
+          relevance: 1.0
+        })));
+        
+        if (filteredConversations.length > 0) {
+          console.log(colors.info(`\n📋 Showing ${filteredConversations.length} conversation${filteredConversations.length > 1 ? 's' : ''}${activeFilters.repos.size > 0 ? ' (filtered)' : ''}:\n`));
+          
+          // Show top 5 filtered conversations
+          filteredConversations.slice(0, 5).forEach((conv, index) => {
+            const isSelected = index === selectedIndex;
+            const modified = conv.modified || new Date();
+            const date = modified.toLocaleDateString();
+            const time = modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            const project = (conv.project || '').slice(0, 50);
+            
+            const cursor = isSelected ? colors.accent('▶ ') : '  ';
+            const resultLine = `${cursor}${colors.dim(date + ' ' + time)} ${colors.accent('│')} ${colors.primary(project)}`;
+            console.log(resultLine);
+          });
+          
+          if (filteredConversations.length > 5) {
+            console.log(colors.dim(`\n... ${filteredConversations.length - 5} more conversations`));
+          }
+          
+          // Update results for navigation
+          results = filteredConversations;
+        } else if (activeFilters.repos.size > 0) {
+          console.log(colors.warning('\n❌ No conversations match the current filter'));
+          console.log(colors.dim('  Press [f] to modify or clear filters'));
+        } else {
+          console.log(colors.dim('\nStart typing to search conversations...'));
+        }
       }
       
       console.log(colors.dim('\n[↑↓] Navigate  [←→] Switch matches  [f] Filter  [Enter] Select  [Esc] Exit'));
@@ -373,9 +408,12 @@ async function showLiveSearch(searchInterface = null) {
         // Ensure stdin is resumed
         process.stdin.resume();
         
-        // Refresh search with new filters
+        // Refresh search or display with new filters
         if (searchTerm.length >= 2) {
           performSearch();
+        } else {
+          // Force refresh of display to show filtered results
+          await displayScreen();
         }
         
         return filterType !== 'back';
