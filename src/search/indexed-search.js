@@ -271,7 +271,6 @@ export class IndexedSearch {
       }
       
       // Calculate relevance percentage
-      const totalQueryElements = terms.length + phrases.length;
       const maxPossibleScore = Math.max(1, (terms.length * 35) + (phrases.length * 35));
       const relevance = Math.min((score / maxPossibleScore), 1.0);
       
@@ -291,9 +290,6 @@ export class IndexedSearch {
   }
 
   async addPreviews(scoredResults, query, terms, phrases) {
-    // For highlighting, we need both terms and phrases
-    const searchPatterns = [...terms, ...phrases];
-    
     const enrichedResults = [];
     
     for (const result of scoredResults.slice(0, 20)) { // Limit to top 20

@@ -158,7 +158,7 @@ async function main() {
       break;
     }
     
-    console.log(colors.info(`\n🔎 Searching for "${searchTerm}"...`));
+    console.log(colors.primary(`\n🔎 Searching for "${searchTerm}"...`));
     
     const results = await extractor.searchConversations(searchTerm, conversations);
     
