@@ -212,10 +212,10 @@ async function showLiveSearch(searchInterface = null) {
         console.log(chalk.bgMagenta.white.bold(' FILTER ACTIVE ') + ' ' + 
                     colors.accent(`Showing only ${repoCount} repo${repoCount > 1 ? 's' : ''}:`));
         console.log(colors.highlight('  📁 ' + displayRepos));
-        console.log(colors.dim('  Press [f] to modify or clear filters\n'));
+        console.log(colors.dim('  Press [Tab] to modify or clear filters\n'));
       } else {
         // Show that no filters are active
-        console.log(colors.dim('  No filters active - showing all repos [Press f to filter]\n'));
+        console.log(colors.dim('  No filters active - showing all repos [Press Tab to filter]\n'));
       }
       
       // Search input with multi-term indicator
@@ -348,13 +348,13 @@ async function showLiveSearch(searchInterface = null) {
           results = filteredConversations;
         } else if (activeFilters.repos.size > 0) {
           console.log(colors.warning('\n❌ No conversations match the current filter'));
-          console.log(colors.dim('  Press [f] to modify or clear filters'));
+          console.log(colors.dim('  Press [Tab] to modify or clear filters'));
         } else {
           console.log(colors.dim('\nStart typing to search conversations...'));
         }
       }
       
-      console.log(colors.dim('\n[↑↓] Navigate  [←→] Switch matches  [f] Filter  [Enter] Select  [Esc] Exit'));
+      console.log(colors.dim('\n[↑↓] Navigate  [←→] Switch matches  [Tab] Filter  [Enter] Select  [Esc] Exit'));
     };
     
     // Get all unique repos from conversations
@@ -596,8 +596,8 @@ async function showLiveSearch(searchInterface = null) {
             await displayScreen();
           }
         }
-      } else if (str === 'f' || str === 'F') {
-        // Open filter menu
+      } else if (key && key.name === 'tab') {
+        // Open filter menu with Tab key
         try {
           // Pause keypress handling
           process.stdin.removeListener('keypress', handleKeypress);
@@ -625,7 +625,7 @@ async function showLiveSearch(searchInterface = null) {
           results = [];
           await displayScreen();
         }
-      } else if (str && str.length === 1 && str.charCodeAt(0) >= 32 && str !== 'f' && str !== 'F') {
+      } else if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
         searchTerm += str;
         selectedIndex = 0;
         await displayScreen();
