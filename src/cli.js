@@ -857,7 +857,17 @@ async function main() {
       }
         
       await setupManager.markSetupComplete();
-      searchInterface = new IndexedSearch();
+      // Try MiniSearch first
+      try {
+        const miniSearch = new MiniSearchEngine();
+        if (await miniSearch.loadIndex()) {
+          searchInterface = miniSearch;
+        } else {
+          searchInterface = new IndexedSearch();
+        }
+      } catch {
+        searchInterface = new IndexedSearch();
+      }
       break;
         
     case 'extract_only':
@@ -870,7 +880,17 @@ async function main() {
       const indexBuilder = new IndexBuilder();
       await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
       await setupManager.markIndexComplete(status.conversations.length);
-      searchInterface = new IndexedSearch();
+      // Try MiniSearch first
+      try {
+        const miniSearch = new MiniSearchEngine();
+        if (await miniSearch.loadIndex()) {
+          searchInterface = miniSearch;
+        } else {
+          searchInterface = new IndexedSearch();
+        }
+      } catch {
+        searchInterface = new IndexedSearch();
+      }
       break;
         
     case 'change_location':
@@ -897,7 +917,18 @@ async function main() {
   
   // Check again if we have index after setup
   if (!searchInterface && status.indexBuilt) {
-    searchInterface = new IndexedSearch();
+    // Try MiniSearch first, fall back to IndexedSearch if it fails
+    try {
+      const miniSearch = new MiniSearchEngine();
+      const loaded = await miniSearch.loadIndex();
+      if (loaded) {
+        searchInterface = miniSearch;
+      } else {
+        searchInterface = new IndexedSearch();
+      }
+    } catch (error) {
+      searchInterface = new IndexedSearch();
+    }
   }
   
   // Show search mode indicator
