@@ -11,6 +11,7 @@ import { showSetupMenu, showAnalytics, confirmExportLocation } from './setup/set
 import { BulkExtractor } from './setup/bulk-extractor.js';
 import { IndexBuilder } from './setup/index-builder.js';
 import { IndexedSearch } from './search/indexed-search.js';
+import { MiniSearchEngine } from './search/minisearch-engine.js';
 
 // Vibe-log style colors
 const colors = {
@@ -158,6 +159,21 @@ async function showLiveSearch(searchInterface = null) {
   if (conversations.length === 0) {
     console.log(colors.error('❌ No Claude conversations found!'));
     return null;
+  }
+  
+  // Try to use MiniSearch if index exists, otherwise fall back to old search
+  let miniSearchEngine = null;
+  if (!searchInterface) {
+    try {
+      miniSearchEngine = new MiniSearchEngine();
+      const loaded = await miniSearchEngine.loadIndex();
+      if (loaded) {
+        console.log(colors.dim('  Using MiniSearch with fuzzy matching...'));
+        searchInterface = miniSearchEngine;
+      }
+    } catch (error) {
+      // Fall back to old search
+    }
   }
   
   return new Promise((resolve) => {

@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import crypto from 'crypto';
 import chalk from 'chalk';
 import ora from 'ora';
+import { MiniSearchEngine } from '../search/minisearch-engine.js';
 
 const colors = {
   primary: chalk.cyan,
@@ -49,7 +50,9 @@ export class IndexBuilder {
     }).start();
     
     let processed = 0;
+    const processedConversations = [];
     
+    // Process conversations for both old format (compatibility) and new MiniSearch format
     for (const conversation of conversations) {
       try {
         const indexEntry = await this.processConversation(conversation, exportDir);
@@ -58,6 +61,7 @@ export class IndexBuilder {
           this.updateInvertedIndex(indexEntry, this.index.conversations.length - 1);
           this.updateProjectIndex(indexEntry, this.index.conversations.length - 1);
           this.updateDateIndex(indexEntry, this.index.conversations.length - 1);
+          processedConversations.push(indexEntry);
         }
         
         processed++;
@@ -79,6 +83,11 @@ export class IndexBuilder {
     
     spinner.stop();
     
+    // Build the new MiniSearch index
+    console.log(colors.info('\n🚀 Building MiniSearch index...'));
+    const miniSearchEngine = new MiniSearchEngine();
+    const miniSearchStats = await miniSearchEngine.buildIndex(processedConversations);
+    
     // Finalize metadata
     const buildDuration = (Date.now() - startTime) / 1000;
     this.index.metadata.buildDate = new Date().toISOString();
@@ -86,14 +95,14 @@ export class IndexBuilder {
     this.index.metadata.buildDuration = buildDuration;
     this.index.metadata.totalWords = Object.keys(this.index.invertedIndex).length;
     
-    // Save the index
+    // Save the old index for compatibility
     await this.saveIndex();
     
     console.log(colors.success('\n✅ Search index built!'));
     console.log(colors.info(`   Conversations indexed: ${processed}`));
-    console.log(colors.info(`   Unique keywords: ${this.index.metadata.totalWords}`));
+    console.log(colors.info(`   MiniSearch terms: ${miniSearchStats.indexSize}`));
     console.log(colors.info(`   Build time: ${buildDuration.toFixed(1)}s`));
-    console.log(colors.info('   ⚡ Search performance improved by ~25x'));
+    console.log(colors.info('   ⚡ Search with fuzzy matching, typo tolerance, and more!'));
     
     // Add pause to let user read the summary
     console.log(colors.dim('\n   Press Enter to continue...'));
@@ -111,7 +120,7 @@ export class IndexBuilder {
     return {
       processed,
       duration: buildDuration,
-      keywords: this.index.metadata.totalWords
+      keywords: miniSearchStats.indexSize
     };
   }
 
