@@ -198,7 +198,8 @@ export class IndexedSearch {
         const contextSize = 100; // Characters before and after
         const previews = [];
         
-        for (const occurrence of allOccurrences.slice(0, 5)) { // Limit to first 5 occurrences
+        // Generate more previews to allow better navigation (up to 20)
+        for (const occurrence of allOccurrences.slice(0, 20)) { // Increased limit for better navigation
           const start = Math.max(0, occurrence.index - contextSize);
           const end = Math.min(fullText.length, occurrence.index + occurrence.length + contextSize);
           

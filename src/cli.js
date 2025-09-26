@@ -200,10 +200,22 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.primary('        🔍 Interactive Conversation Search'));
       console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
       
-      // Display active filters
+      // Display active filters with prominent indicator
       if (activeFilters.repos.size > 0) {
-        const repoList = Array.from(activeFilters.repos).join(', ');
-        console.log(colors.accent('🏷️  Filtering repos: ') + colors.highlight(repoList));
+        const repoCount = activeFilters.repos.size;
+        const repoList = Array.from(activeFilters.repos);
+        const displayRepos = repoList.length > 3 
+          ? repoList.slice(0, 3).join(', ') + `, +${repoList.length - 3} more`
+          : repoList.join(', ');
+        
+        // Prominent filter indicator box
+        console.log(chalk.bgMagenta.white.bold(' FILTER ACTIVE ') + ' ' + 
+                    colors.accent(`Showing only ${repoCount} repo${repoCount > 1 ? 's' : ''}:`));
+        console.log(colors.highlight('  📁 ' + displayRepos));
+        console.log(colors.dim('  Press [f] to modify or clear filters\n'));
+      } else {
+        // Show that no filters are active
+        console.log(colors.dim('  No filters active - showing all repos [Press f to filter]\n'));
       }
       
       // Search input
@@ -215,8 +227,16 @@ async function showLiveSearch(searchInterface = null) {
           console.log(colors.info('\n🔎 Searching...'));
         } else if (results.length === 0) {
           console.log(colors.warning('\n❌ No matches found'));
+          if (activeFilters.repos.size > 0) {
+            console.log(colors.dim('  (Try clearing filters with [f] if too restrictive)'));
+          }
         } else {
-          console.log(colors.info(`\n📋 ${results.length} matches found:\n`));
+          // Show result count with filter context
+          let resultText = `\n📋 ${results.length} matches found`;
+          if (activeFilters.repos.size > 0) {
+            resultText += colors.dim(` (filtered)`);
+          }
+          console.log(colors.info(resultText + ':\n'));
           
           // Show top 5 results
           results.slice(0, 5).forEach((result, index) => {
@@ -253,7 +273,15 @@ async function showLiveSearch(searchInterface = null) {
               let contextHeader = 'Context:';
               if (result.totalOccurrences && result.totalOccurrences > 1) {
                 const currentMatch = (result.currentPreviewIndex || 0) + 1;
-                contextHeader = `Context: Match ${currentMatch}/${result.totalOccurrences} ${colors.dim('[←→ navigate]')}`;
+                const availablePreviews = result.allPreviews ? result.allPreviews.length : 1;
+                
+                if (availablePreviews < result.totalOccurrences) {
+                  // We have more occurrences than previews
+                  contextHeader = `Context: Showing match ${currentMatch}/${availablePreviews} of ${result.totalOccurrences} total ${colors.dim('[←→ navigate]')}`;
+                } else {
+                  // All occurrences have previews
+                  contextHeader = `Context: Match ${currentMatch}/${result.totalOccurrences} ${colors.dim('[←→ navigate]')}`;
+                }
               } else if (result.totalOccurrences === 1) {
                 contextHeader = 'Context: Match 1/1';
               }
