@@ -145,17 +145,68 @@ export class IndexedSearch {
     for (const term of terms) {
       const termIndices = new Set();
       
-      // Direct matches
-      if (this.index.invertedIndex[term]) {
-        for (const idx of this.index.invertedIndex[term].conversations) {
-          termIndices.add(idx);
+      // Handle hyphenated terms by checking both the full term and split parts
+      // Since the index strips hyphens, "toast-analytics" is indexed as "toast" and "analytics"
+      const searchTerms = [term];
+      
+      // If term contains hyphens, also search for the non-hyphenated version
+      if (term.includes('-')) {
+        // Add the version without hyphens as one word
+        searchTerms.push(term.replace(/-/g, ''));
+        // Also split on hyphens to search for parts
+        const parts = term.split('-').filter(p => p.length > 0);
+        // For hyphenated terms, we need to find docs that have ALL parts
+        // We'll handle this specially below
+        searchTerms.hyphenParts = parts;
+      }
+      
+      // Direct matches for each search variant
+      for (const searchTerm of searchTerms) {
+        if (this.index.invertedIndex[searchTerm]) {
+          for (const idx of this.index.invertedIndex[searchTerm].conversations) {
+            termIndices.add(idx);
+          }
+        }
+        
+        // Prefix matches
+        for (const indexedWord in this.index.invertedIndex) {
+          if (indexedWord.startsWith(searchTerm) && indexedWord !== searchTerm) {
+            for (const idx of this.index.invertedIndex[indexedWord].conversations) {
+              termIndices.add(idx);
+            }
+          }
         }
       }
       
-      // Prefix matches - "java" matches "javascript", etc.
-      for (const indexedWord in this.index.invertedIndex) {
-        if (indexedWord.startsWith(term) && indexedWord !== term) {
-          for (const idx of this.index.invertedIndex[indexedWord].conversations) {
+      // For hyphenated terms, also find conversations that contain ALL parts
+      if (searchTerms.hyphenParts) {
+        // Find conversations that contain ALL parts of the hyphenated term
+        let hyphenIndices = null;
+        for (const part of searchTerms.hyphenParts) {
+          const partIndices = new Set();
+          if (this.index.invertedIndex[part]) {
+            for (const idx of this.index.invertedIndex[part].conversations) {
+              partIndices.add(idx);
+            }
+          }
+          
+          // Accumulate intersection of all parts
+          if (hyphenIndices === null) {
+            hyphenIndices = partIndices;
+          } else {
+            const intersection = new Set();
+            for (const idx of hyphenIndices) {
+              if (partIndices.has(idx)) {
+                intersection.add(idx);
+              }
+            }
+            hyphenIndices = intersection;
+          }
+        }
+        
+        // Add conversations that have all parts
+        if (hyphenIndices) {
+          for (const idx of hyphenIndices) {
             termIndices.add(idx);
           }
         }
