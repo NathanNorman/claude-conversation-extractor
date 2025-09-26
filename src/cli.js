@@ -21,7 +21,7 @@ const colors = {
   info: chalk.cyan,
   muted: chalk.hex('#808080'),
   accent: chalk.magenta,
-  highlight: chalk.bold.white,
+  highlight: chalk.bold.yellow,
   dim: chalk.hex('#606060'),
   subdued: chalk.hex('#909090')
 };
@@ -222,23 +222,51 @@ async function showLiveSearch(searchInterface = null) {
             console.log(resultLine);
             
             if (isSelected && result.preview) {
-              // Show more context for selected item with word wrapping
+              // Show more context for selected item with word wrapping and highlighting
               const preview = result.preview;
               const maxWidth = 90;
+              
+              // Function to render text with highlights
+              const renderWithHighlights = (text) => {
+                // Replace [HIGHLIGHT]...[/HIGHLIGHT] with colored text
+                return text.replace(/\[HIGHLIGHT\](.*?)\[\/HIGHLIGHT\]/g, (match, p1) => {
+                  return colors.highlight(p1);
+                });
+              };
+              
+              // Split preview into words while preserving highlight markers
               const words = preview.split(' ');
               let currentLine = '';
               
-              console.log(colors.subdued('    ┌─ Context:'));
+              // Show occurrence counter if there are multiple matches
+              let contextHeader = 'Context:';
+              if (result.totalOccurrences && result.totalOccurrences > 1) {
+                const currentMatch = (result.currentPreviewIndex || 0) + 1;
+                contextHeader = `Context: Match ${currentMatch}/${result.totalOccurrences} ${colors.dim('[←→ navigate]')}`;
+              } else if (result.totalOccurrences === 1) {
+                contextHeader = 'Context: Match 1/1';
+              }
+              
+              console.log(colors.subdued('    ┌─ ' + contextHeader));
+              
               for (const word of words) {
-                if ((currentLine + word).length > maxWidth) {
-                  console.log(colors.subdued(`    │ ${currentLine.trim()}`));
+                // Calculate actual display length (without highlight markers)
+                const displayWord = word.replace(/\[HIGHLIGHT\]/g, '').replace(/\[\/HIGHLIGHT\]/g, '');
+                const displayLine = currentLine.replace(/\[HIGHLIGHT\]/g, '').replace(/\[\/HIGHLIGHT\]/g, '');
+                
+                if ((displayLine + displayWord).length > maxWidth) {
+                  // Render and print the current line
+                  const renderedLine = renderWithHighlights(currentLine.trim());
+                  console.log(colors.subdued('    │ ') + renderedLine);
                   currentLine = word + ' ';
                 } else {
                   currentLine += word + ' ';
                 }
               }
+              
               if (currentLine.trim()) {
-                console.log(colors.subdued(`    │ ${currentLine.trim()}`));
+                const renderedLine = renderWithHighlights(currentLine.trim());
+                console.log(colors.subdued('    │ ') + renderedLine);
               }
               console.log(colors.subdued('    └─'));
             }
@@ -254,7 +282,7 @@ async function showLiveSearch(searchInterface = null) {
         console.log(colors.dim('\nStart typing to search conversations...'));
       }
       
-      console.log(colors.dim('\n[↑↓] Navigate  [Enter] Select  [Esc] Exit'));
+      console.log(colors.dim('\n[↑↓] Navigate  [←→] Switch matches  [Enter] Select  [Esc] Exit'));
     };
     
     // Debounced search to prevent excessive API calls
@@ -272,7 +300,7 @@ async function showLiveSearch(searchInterface = null) {
               name: r.exportedFile ? r.exportedFile.split('/').pop() : 'conversation.jsonl',
               path: r.originalPath,
               size: 0, // Size not tracked in index
-              preview: r.preview.replace(/\[HIGHLIGHT\]/g, '').replace(/\[\/HIGHLIGHT\]/g, '')
+              preview: r.preview  // Keep highlight markers for display
             }));
           } else {
             results = await extractor.searchConversations(searchTerm, conversations);
@@ -315,6 +343,26 @@ async function showLiveSearch(searchInterface = null) {
         if (results.length > 0) {
           selectedIndex = Math.min(results.length - 1, selectedIndex + 1);
           await displayScreen();
+        }
+      } else if (key && key.name === 'right') {
+        // Navigate to next occurrence in selected conversation
+        if (results.length > 0 && selectedIndex < results.length) {
+          const result = results[selectedIndex];
+          if (result.allPreviews && result.allPreviews.length > 1) {
+            result.currentPreviewIndex = (result.currentPreviewIndex + 1) % result.allPreviews.length;
+            result.preview = result.allPreviews[result.currentPreviewIndex];
+            await displayScreen();
+          }
+        }
+      } else if (key && key.name === 'left') {
+        // Navigate to previous occurrence in selected conversation
+        if (results.length > 0 && selectedIndex < results.length) {
+          const result = results[selectedIndex];
+          if (result.allPreviews && result.allPreviews.length > 1) {
+            result.currentPreviewIndex = (result.currentPreviewIndex - 1 + result.allPreviews.length) % result.allPreviews.length;
+            result.preview = result.allPreviews[result.currentPreviewIndex];
+            await displayScreen();
+          }
         }
       } else if (key && key.name === 'backspace') {
         searchTerm = searchTerm.slice(0, -1);
@@ -594,4 +642,13 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+// Export for testing
+export { showLiveSearch };
+
+// Run main if this is the entry point or if called via symlink
+if (import.meta.url === `file://${process.argv[1]}` || 
+    import.meta.url === `file://${process.argv[1].replace(/^\/opt\/homebrew/, '/usr/local')}` ||
+    process.argv[1].includes('claude-logs') ||
+    process.argv[1].endsWith('/cli.js')) {
+  main().catch(console.error);
+}

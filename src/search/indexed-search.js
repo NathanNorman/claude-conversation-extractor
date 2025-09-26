@@ -167,31 +167,132 @@ export class IndexedSearch {
     for (const result of scoredResults.slice(0, 20)) { // Limit to top 20
       const conversation = result.conversation;
       
-      // Generate highlighted preview
-      let preview = conversation.preview;
+      // Read the actual conversation file to get full text
+      let fullText = '';
+      const allOccurrences = [];
       
-      // Highlight matching words
-      for (const word of queryWords) {
-        const regex = new RegExp(`\\b(${word}\\w*)`, 'gi');
-        preview = preview.replace(regex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+      try {
+        const content = await readFile(conversation.originalPath, 'utf-8');
+        const lines = content.trim().split('\n').filter(line => line.trim());
+        
+        // Extract all text from messages
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if ((data.type === 'user' || data.type === 'assistant') && data.message && !data.isMeta) {
+              const text = this.extractTextFromMessage(data.message);
+              fullText += ' ' + text;
+            }
+          } catch (err) {
+            // Skip invalid JSON lines
+          }
+        }
+        
+        // Find all occurrences of the search terms
+        for (const word of queryWords) {
+          const regex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+          let match;
+          while ((match = regex.exec(fullText)) !== null) {
+            allOccurrences.push({
+              index: match.index,
+              length: match[0].length,
+              word: match[0],
+              queryWord: word
+            });
+          }
+        }
+        
+        // Sort occurrences by position
+        allOccurrences.sort((a, b) => a.index - b.index);
+        
+        // Generate previews for each occurrence (with context)
+        const contextSize = 100; // Characters before and after
+        const previews = [];
+        
+        for (const occurrence of allOccurrences.slice(0, 5)) { // Limit to first 5 occurrences
+          const start = Math.max(0, occurrence.index - contextSize);
+          const end = Math.min(fullText.length, occurrence.index + occurrence.length + contextSize);
+          
+          let contextText = fullText.substring(start, end).trim();
+          
+          // Add ellipsis if truncated
+          if (start > 0) contextText = '...' + contextText;
+          if (end < fullText.length) contextText = contextText + '...';
+          
+          // Highlight all matching words in this context
+          for (const word of queryWords) {
+            const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+            contextText = contextText.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+          }
+          
+          previews.push(contextText);
+        }
+        
+        // Use the first occurrence preview as the main preview
+        const preview = previews.length > 0 ? previews[0] : conversation.preview;
+        
+        // Format the result with all occurrence data
+        enrichedResults.push({
+          project: conversation.project,
+          exportedFile: conversation.exportedFile,
+          originalPath: conversation.originalPath,
+          modified: conversation.modified,
+          messageCount: conversation.messageCount,
+          relevance: result.relevance,
+          preview: preview,
+          allPreviews: previews,  // All occurrence previews for navigation
+          currentPreviewIndex: 0,  // Track which preview is being shown
+          totalOccurrences: allOccurrences.length,
+          matchedWords: result.matchedWords,
+          toolsUsed: conversation.toolsUsed,
+          topicTags: conversation.topicTags
+        });
+        
+      } catch (error) {
+        // Fall back to static preview if file reading fails
+        let preview = conversation.preview;
+        
+        // Still try to highlight in the static preview
+        for (const word of queryWords) {
+          const regex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+          preview = preview.replace(regex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+        }
+        
+        enrichedResults.push({
+          project: conversation.project,
+          exportedFile: conversation.exportedFile,
+          originalPath: conversation.originalPath,
+          modified: conversation.modified,
+          messageCount: conversation.messageCount,
+          relevance: result.relevance,
+          preview: preview,
+          allPreviews: [preview],
+          currentPreviewIndex: 0,
+          totalOccurrences: 0,
+          matchedWords: result.matchedWords,
+          toolsUsed: conversation.toolsUsed,
+          topicTags: conversation.topicTags
+        });
       }
-      
-      // Format the result
-      enrichedResults.push({
-        project: conversation.project,
-        exportedFile: conversation.exportedFile,
-        originalPath: conversation.originalPath,
-        modified: conversation.modified,
-        messageCount: conversation.messageCount,
-        relevance: result.relevance,
-        preview: preview,
-        matchedWords: result.matchedWords,
-        toolsUsed: conversation.toolsUsed,
-        topicTags: conversation.topicTags
-      });
     }
     
     return enrichedResults;
+  }
+  
+  extractTextFromMessage(message) {
+    let text = '';
+    
+    if (typeof message.content === 'string') {
+      text = message.content;
+    } else if (Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (part.type === 'text' && part.text) {
+          text += ' ' + part.text;
+        }
+      }
+    }
+    
+    return text.trim();
   }
 
   getAllConversations() {
