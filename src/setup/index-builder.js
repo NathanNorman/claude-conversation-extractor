@@ -1,6 +1,5 @@
-import { readFile, writeFile } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import crypto from 'crypto';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -17,20 +16,13 @@ const colors = {
 
 export class IndexBuilder {
   constructor() {
-    this.indexPath = join(homedir(), '.claude', 'claude_conversations', 'search-index.json');
+    // Only tracking metadata for display purposes
     this.index = {
       metadata: {
-        version: '2.0',
         buildDate: null,
         totalConversations: 0,
-        totalWords: 0,
-        buildDuration: 0,
-        searchOptimizations: ['keyword_density', 'semantic_chunking']
-      },
-      conversations: [],
-      invertedIndex: {},
-      projectIndex: {},
-      dateIndex: {}
+        buildDuration: 0
+      }
     };
     this.stopWords = new Set([
       'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
@@ -40,11 +32,11 @@ export class IndexBuilder {
   }
 
   async buildSearchIndex(conversations, exportDir, progressCallback) {
-    console.log(colors.info('\n🗂️  Building search index...\n'));
+    console.log(colors.info('\n🗂️  Preparing search index...\n'));
     
     const startTime = Date.now();
     const spinner = ora({
-      text: 'Starting index build...',
+      text: 'Reading conversation content...',
       color: 'cyan',
       spinner: 'dots'
     }).start();
@@ -52,21 +44,17 @@ export class IndexBuilder {
     let processed = 0;
     const processedConversations = [];
     
-    // Process conversations for both old format (compatibility) and new MiniSearch format
+    // Step 1: Extract text from all conversations
     for (const conversation of conversations) {
       try {
         const indexEntry = await this.processConversation(conversation, exportDir);
         if (indexEntry) {
-          this.index.conversations.push(indexEntry);
-          this.updateInvertedIndex(indexEntry, this.index.conversations.length - 1);
-          this.updateProjectIndex(indexEntry, this.index.conversations.length - 1);
-          this.updateDateIndex(indexEntry, this.index.conversations.length - 1);
           processedConversations.push(indexEntry);
         }
         
         processed++;
         const percentage = Math.round((processed / conversations.length) * 100);
-        spinner.text = `🔄 Processing: ${percentage}% (${processed}/${conversations.length})`;
+        spinner.text = `Processing conversations: ${percentage}% (${processed}/${conversations.length})`;
         
         if (progressCallback) {
           progressCallback({
@@ -83,20 +71,16 @@ export class IndexBuilder {
     
     spinner.stop();
     
-    // Build the new MiniSearch index
-    console.log(colors.info('\n🚀 Building MiniSearch index...'));
+    // Step 2: Build the MiniSearch index from the processed conversations
+    console.log(colors.info('   Indexing for fast search...'));
     const miniSearchEngine = new MiniSearchEngine();
     const miniSearchStats = await miniSearchEngine.buildIndex(processedConversations);
     
-    // Finalize metadata
+    // Update metadata for compatibility
     const buildDuration = (Date.now() - startTime) / 1000;
     this.index.metadata.buildDate = new Date().toISOString();
-    this.index.metadata.totalConversations = this.index.conversations.length;
+    this.index.metadata.totalConversations = processedConversations.length;
     this.index.metadata.buildDuration = buildDuration;
-    this.index.metadata.totalWords = Object.keys(this.index.invertedIndex).length;
-    
-    // Save the old index for compatibility
-    await this.saveIndex();
     
     console.log(colors.success('\n✅ Search index built!'));
     console.log(colors.info(`   Conversations indexed: ${processed}`));
@@ -207,7 +191,8 @@ export class IndexBuilder {
         preview,
         speakers: [...new Set(messages.map(m => m.role))],
         toolsUsed: Array.from(toolsUsed),
-        allWords: uniqueWords  // Store ALL unique words for complete search
+        allWords: uniqueWords,  // Store ALL unique words for complete search
+        fullText: fullText  // Pass the full text to MiniSearch so it doesn't need to re-read files
       };
     } catch (error) {
       console.error(`Error processing conversation ${conversation.project}:`, error);
@@ -306,79 +291,5 @@ export class IndexBuilder {
     
     return Array.from(topics).slice(0, 5);
   }
-
-  updateInvertedIndex(entry, conversationIndex) {
-    // Index ALL words from the conversation, not just keywords
-    if (entry.allWords) {
-      for (const word of entry.allWords) {
-        if (!this.index.invertedIndex[word]) {
-          this.index.invertedIndex[word] = {
-            conversations: [],
-            totalOccurrences: 0,
-            avgRelevance: 0
-          };
-        }
-        
-        // Ensure conversations array exists before checking includes
-        if (!this.index.invertedIndex[word].conversations) {
-          this.index.invertedIndex[word].conversations = [];
-        }
-        
-        // Only add if not already indexed for this conversation
-        if (!this.index.invertedIndex[word].conversations.includes(conversationIndex)) {
-          this.index.invertedIndex[word].conversations.push(conversationIndex);
-          this.index.invertedIndex[word].totalOccurrences += 1;
-        }
-      }
-    } else {
-      // Fallback to keywords if allWords not available (for old indexes)
-      for (const keyword of entry.extractedKeywords) {
-        if (!this.index.invertedIndex[keyword]) {
-          this.index.invertedIndex[keyword] = {
-            conversations: [],
-            totalOccurrences: 0,
-            avgRelevance: 0
-          };
-        }
-        
-        // Ensure conversations array exists before using it
-        if (!this.index.invertedIndex[keyword].conversations) {
-          this.index.invertedIndex[keyword].conversations = [];
-        }
-        
-        this.index.invertedIndex[keyword].conversations.push(conversationIndex);
-        this.index.invertedIndex[keyword].totalOccurrences += entry.keywordFrequency[keyword] || 1;
-      }
-    }
-  }
-
-  updateProjectIndex(entry, conversationIndex) {
-    if (!this.index.projectIndex[entry.project]) {
-      this.index.projectIndex[entry.project] = [];
-    }
-    this.index.projectIndex[entry.project].push(conversationIndex);
-  }
-
-  updateDateIndex(entry, conversationIndex) {
-    const date = new Date(entry.modified).toISOString().split('T')[0];
-    if (!this.index.dateIndex[date]) {
-      this.index.dateIndex[date] = [];
-    }
-    this.index.dateIndex[date].push(conversationIndex);
-  }
-
-  async saveIndex() {
-    // indexDir removed - already part of this.indexPath
-    await writeFile(this.indexPath, JSON.stringify(this.index, null, 2));
-  }
-
-  async loadIndex() {
-    try {
-      const content = await readFile(this.indexPath, 'utf-8');
-      this.index = JSON.parse(content);
-      return this.index;
-    } catch {
-      return null;
-    }
-  }
 }
+

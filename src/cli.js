@@ -10,7 +10,7 @@ import { SetupManager } from './setup/setup-manager.js';
 import { showSetupMenu, showAnalytics, confirmExportLocation } from './setup/setup-menu.js';
 import { BulkExtractor } from './setup/bulk-extractor.js';
 import { IndexBuilder } from './setup/index-builder.js';
-import { IndexedSearch } from './search/indexed-search.js';
+// Removed IndexedSearch - using only MiniSearch now
 import { MiniSearchEngine } from './search/minisearch-engine.js';
 
 // Vibe-log style colors
@@ -27,17 +27,31 @@ const colors = {
   subdued: chalk.hex('#909090')
 };
 
+
 // Debounce function for performance
 function debounce(func, wait) {
   let timeout;
-  return function executedFunction(...args) {
+  let lastArgs;
+  
+  const executedFunction = function(...args) {
+    lastArgs = args;
     const later = () => {
       clearTimeout(timeout);
-      func(...args);
+      func(...lastArgs);
     };
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
+  
+  // Add flush method to execute immediately
+  executedFunction.flush = function() {
+    clearTimeout(timeout);
+    if (lastArgs) {
+      func(...lastArgs);
+    }
+  };
+  
+  return executedFunction;
 }
 
 class ClaudeConversationExtractor {
@@ -259,9 +273,26 @@ async function showLiveSearch(searchInterface = null) {
           }
           console.log(colors.info(resultText + ':\n'));
           
-          // Show top 5 results
-          results.slice(0, 5).forEach((result, index) => {
-            const isSelected = index === selectedIndex;
+          // Calculate scrolling window
+          const windowSize = 5;
+          let windowStart = 0;
+          
+          // Adjust window to keep selected item visible
+          if (selectedIndex >= windowStart + windowSize) {
+            windowStart = selectedIndex - windowSize + 1;
+          } else if (selectedIndex < windowStart) {
+            windowStart = selectedIndex;
+          }
+          
+          // Ensure window doesn't go past the end
+          if (windowStart + windowSize > results.length) {
+            windowStart = Math.max(0, results.length - windowSize);
+          }
+          
+          // Show results in the current window
+          results.slice(windowStart, windowStart + windowSize).forEach((result, index) => {
+            const actualIndex = windowStart + index;
+            const isSelected = actualIndex === selectedIndex;
             // Handle both basic search (result.file) and indexed search (direct properties)
             const modified = result.file?.modified || (result.modified ? new Date(result.modified) : new Date());
             const date = modified.toLocaleDateString();
@@ -325,8 +356,15 @@ async function showLiveSearch(searchInterface = null) {
             }
           });
           
-          if (results.length > 5) {
-            console.log(colors.dim(`\n... ${results.length - 5} more results`));
+          if (results.length > windowSize) {
+            // Show position indicator
+            if (windowStart > 0 && windowStart + windowSize < results.length) {
+              console.log(colors.dim(`\n... showing ${windowStart + 1}-${windowStart + windowSize} of ${results.length} results ...`));
+            } else if (windowStart > 0) {
+              console.log(colors.dim(`\n... showing ${windowStart + 1}-${results.length} of ${results.length} results (end)`));
+            } else if (results.length > windowSize) {
+              console.log(colors.dim(`\n... ${results.length - windowSize} more results ...`));
+            }
           }
         }
       } else if (searchTerm.length > 0) {
@@ -343,9 +381,26 @@ async function showLiveSearch(searchInterface = null) {
         if (filteredConversations.length > 0) {
           console.log(colors.info(`\n📋 Showing ${filteredConversations.length} conversation${filteredConversations.length > 1 ? 's' : ''}${activeFilters.repos.size > 0 ? ' (filtered)' : ''}:\n`));
           
-          // Show top 5 filtered conversations
-          filteredConversations.slice(0, 5).forEach((conv, index) => {
-            const isSelected = index === selectedIndex;
+          // Calculate scrolling window for conversations
+          const windowSize = 5;
+          let windowStart = 0;
+          
+          // Adjust window to keep selected item visible
+          if (selectedIndex >= windowStart + windowSize) {
+            windowStart = selectedIndex - windowSize + 1;
+          } else if (selectedIndex < windowStart) {
+            windowStart = selectedIndex;
+          }
+          
+          // Ensure window doesn't go past the end
+          if (windowStart + windowSize > filteredConversations.length) {
+            windowStart = Math.max(0, filteredConversations.length - windowSize);
+          }
+          
+          // Show filtered conversations in the current window
+          filteredConversations.slice(windowStart, windowStart + windowSize).forEach((conv, index) => {
+            const actualIndex = windowStart + index;
+            const isSelected = actualIndex === selectedIndex;
             const modified = conv.modified || new Date();
             const date = modified.toLocaleDateString();
             const time = modified.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -356,8 +411,15 @@ async function showLiveSearch(searchInterface = null) {
             console.log(resultLine);
           });
           
-          if (filteredConversations.length > 5) {
-            console.log(colors.dim(`\n... ${filteredConversations.length - 5} more conversations`));
+          if (filteredConversations.length > windowSize) {
+            // Show position indicator
+            if (windowStart > 0 && windowStart + windowSize < filteredConversations.length) {
+              console.log(colors.dim(`\n... showing ${windowStart + 1}-${windowStart + windowSize} of ${filteredConversations.length} conversations ...`));
+            } else if (windowStart > 0) {
+              console.log(colors.dim(`\n... showing ${windowStart + 1}-${filteredConversations.length} of ${filteredConversations.length} conversations (end)`));
+            } else if (filteredConversations.length > windowSize) {
+              console.log(colors.dim(`\n... ${filteredConversations.length - windowSize} more conversations ...`));
+            }
           }
           
           // Update results for navigation
@@ -426,9 +488,38 @@ async function showLiveSearch(searchInterface = null) {
         
         // Refresh search or display with new filters
         if (searchTerm.length >= 2) {
-          performSearch();
+          // Force immediate search with new filters
+          isSearching = true;
+          await displayScreen();
+          
+          try {
+            let searchResults;
+            if (searchInterface) {
+              const searchResult = await searchInterface.search(searchTerm);
+              searchResults = searchResult.results.map(r => ({
+                ...r,
+                name: r.exportedFile ? r.exportedFile.split('/').pop() : 'conversation.jsonl',
+                path: r.originalPath,
+                size: 0,
+                preview: r.preview
+              }));
+            } else {
+              searchResults = await extractor.searchConversations(searchTerm, conversations);
+            }
+            
+            // Apply active filters
+            results = applyFilters(searchResults);
+            selectedIndex = 0;
+          } catch (error) {
+            results = [];
+            console.error('Search error:', error);
+          }
+          
+          isSearching = false;
+          await displayScreen();
         } else {
           // Force refresh of display to show filtered results
+          selectedIndex = 0;
           await displayScreen();
         }
         
@@ -857,16 +948,11 @@ async function main() {
       }
         
       await setupManager.markSetupComplete();
-      // Try MiniSearch first
-      try {
-        const miniSearch = new MiniSearchEngine();
-        if (await miniSearch.loadIndex()) {
-          searchInterface = miniSearch;
-        } else {
-          searchInterface = new IndexedSearch();
-        }
-      } catch {
-        searchInterface = new IndexedSearch();
+      // Load MiniSearch index
+      const miniSearch = new MiniSearchEngine();
+      const loaded = await miniSearch.loadIndex();
+      if (loaded) {
+        searchInterface = miniSearch;
       }
       break;
         
@@ -880,16 +966,11 @@ async function main() {
       const indexBuilder = new IndexBuilder();
       await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
       await setupManager.markIndexComplete(status.conversations.length);
-      // Try MiniSearch first
-      try {
-        const miniSearch = new MiniSearchEngine();
-        if (await miniSearch.loadIndex()) {
-          searchInterface = miniSearch;
-        } else {
-          searchInterface = new IndexedSearch();
-        }
-      } catch {
-        searchInterface = new IndexedSearch();
+      // Load MiniSearch index
+      const miniSearchIdx = new MiniSearchEngine();
+      const indexLoaded = await miniSearchIdx.loadIndex();
+      if (indexLoaded) {
+        searchInterface = miniSearchIdx;
       }
       break;
         
@@ -917,17 +998,15 @@ async function main() {
   
   // Check again if we have index after setup
   if (!searchInterface && status.indexBuilt) {
-    // Try MiniSearch first, fall back to IndexedSearch if it fails
+    // Try to load MiniSearch
     try {
       const miniSearch = new MiniSearchEngine();
       const loaded = await miniSearch.loadIndex();
       if (loaded) {
         searchInterface = miniSearch;
-      } else {
-        searchInterface = new IndexedSearch();
       }
     } catch (error) {
-      searchInterface = new IndexedSearch();
+      console.error(colors.error('Failed to load search index:', error.message));
     }
   }
   

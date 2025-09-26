@@ -68,9 +68,15 @@ export class MiniSearchEngine {
     for (let i = 0; i < conversations.length; i++) {
       const conv = conversations[i];
       
-      // Read full content if we have the path
+      // Check if we already have processed content (from IndexBuilder)
       let fullContent = '';
-      if (conv.originalPath) {
+      
+      // If fullText exists, we already processed this in IndexBuilder
+      if (conv.fullText) {
+        // Use the full text that was already extracted
+        fullContent = conv.fullText;
+      } else if (conv.originalPath) {
+        // Fallback: read full content if we have the path
         try {
           const content = await readFile(conv.originalPath, 'utf-8');
           const lines = content.trim().split('\n').filter(line => line.trim());
@@ -139,7 +145,7 @@ export class MiniSearchEngine {
     }
     
     // Parse query to handle exact phrases
-    const { searchQuery, searchOptions } = this.parseQuery(query);
+    const { searchQuery, searchOptions, phrases } = this.parseQuery(query);
     
     // Perform search with MiniSearch
     const results = this.miniSearch.search(searchQuery, searchOptions);
@@ -150,19 +156,29 @@ export class MiniSearchEngine {
       const conversation = this.conversationData.get(result.id);
       if (!conversation) continue;
       
+      const fullText = conversation.fullText || '';
+      
+      // Find all occurrences for navigation
+      const allOccurrences = this.findAllOccurrences(fullText, searchQuery, phrases);
+      
       // Generate preview with highlighted matches
-      const preview = this.generatePreview(
-        conversation.fullText || conversation.preview || '',
-        query,
-        result.match
-      );
+      let preview = conversation.preview || '';
+      if (allOccurrences.length > 0) {
+        preview = this.generatePreviewForOccurrence(fullText, allOccurrences[0], searchQuery, phrases);
+      }
       
       enrichedResults.push({
         ...conversation,
         relevance: result.score / (results[0]?.score || 1), // Normalize score
         preview,
         matches: result.match, // Which fields matched
-        terms: result.terms    // Which search terms matched
+        terms: result.terms,   // Which search terms matched
+        occurrences: allOccurrences,
+        currentOccurrenceIndex: 0,
+        totalOccurrences: allOccurrences.length,
+        fullText: fullText,
+        queryWords: searchQuery.split(/\s+/).filter(t => t),
+        queryPhrases: phrases
       });
     }
     
@@ -233,25 +249,146 @@ export class MiniSearchEngine {
     
     return {
       searchQuery: modifiedQuery.trim(),
-      searchOptions
+      searchOptions,
+      phrases
     };
+  }
+
+  /**
+   * Find all occurrences of search terms in text
+   */
+  findAllOccurrences(fullText, searchQuery, phrases = []) {
+    const occurrences = [];
+    
+    // Remove phrases from query to get individual terms
+    let cleanQuery = searchQuery;
+    for (const phrase of phrases) {
+      cleanQuery = cleanQuery.replace(`"${phrase}"`, '');
+    }
+    
+    const terms = cleanQuery.trim() ? cleanQuery.toLowerCase().split(/\s+/).filter(t => t) : [];
+    
+    // Find individual term occurrences
+    for (const term of terms) {
+      const regex = new RegExp(`\\b(${term}\\w*)`, 'gi');
+      let match;
+      while ((match = regex.exec(fullText)) !== null) {
+        occurrences.push({
+          index: match.index,
+          length: match[0].length,
+          word: match[0],
+          queryWord: term,
+          isPhrase: false
+        });
+      }
+    }
+    
+    // Find phrase occurrences
+    for (const phrase of phrases) {
+      const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      let match;
+      while ((match = regex.exec(fullText)) !== null) {
+        occurrences.push({
+          index: match.index,
+          length: match[0].length,
+          word: match[0],
+          queryWord: phrase,
+          isPhrase: true
+        });
+      }
+    }
+    
+    // Sort by position
+    occurrences.sort((a, b) => a.index - b.index);
+    return occurrences;
+  }
+
+  /**
+   * Generate preview for a specific occurrence
+   */
+  generatePreviewForOccurrence(fullText, occurrence, searchQuery, phrases = []) {
+    const contextSize = 100;
+    const start = Math.max(0, occurrence.index - contextSize);
+    const end = Math.min(fullText.length, occurrence.index + occurrence.length + contextSize);
+    
+    let preview = fullText.substring(start, end).trim();
+    
+    // Add ellipsis if truncated
+    if (start > 0) preview = '...' + preview;
+    if (end < fullText.length) preview = preview + '...';
+    
+    // Highlight matching terms
+    // Remove phrases from query to get individual terms
+    let cleanQuery = searchQuery;
+    for (const phrase of phrases) {
+      cleanQuery = cleanQuery.replace(`"${phrase}"`, '');
+    }
+    
+    const terms = cleanQuery.trim() ? cleanQuery.toLowerCase().split(/\s+/).filter(t => t) : [];
+    
+    // Highlight phrases first (they take priority)
+    for (const phrase of phrases) {
+      const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      preview = preview.replace(regex, '[HIGHLIGHT]$&[/HIGHLIGHT]');
+    }
+    
+    // Then highlight individual terms not already in highlighted phrases
+    for (const term of terms) {
+      const regex = new RegExp(`\\b(${term}\\w*)`, 'gi');
+      preview = preview.replace(regex, (match, capturedGroup, offset, string) => {
+        // Check if already inside a highlight
+        const before = string.substring(0, offset);
+        const after = string.substring(offset);
+        const lastHighlightStart = before.lastIndexOf('[HIGHLIGHT]');
+        const lastHighlightEnd = before.lastIndexOf('[/HIGHLIGHT]');
+        const nextHighlightEnd = after.indexOf('[/HIGHLIGHT]');
+        
+        if (lastHighlightStart > lastHighlightEnd && nextHighlightEnd !== -1) {
+          return match;
+        }
+        return '[HIGHLIGHT]' + match + '[/HIGHLIGHT]';
+      });
+    }
+    
+    return preview;
   }
 
   /**
    * Generate preview with context and highlighting
    */
-  generatePreview(fullText, query, _matches) {
+  generatePreview(fullText, query, _matches, phrases = []) {
     if (!fullText) return '';
     
-    const queryTerms = query.toLowerCase().split(/\s+/);
+    // Extract phrases from the query
+    const quotedPhrases = phrases.length > 0 ? phrases : [];
+    
+    // Remove quoted phrases from query to get individual terms
+    let cleanQuery = query;
+    for (const phrase of quotedPhrases) {
+      cleanQuery = cleanQuery.replace(`"${phrase}"`, '');
+    }
+    
+    const queryTerms = cleanQuery.trim() ? cleanQuery.toLowerCase().split(/\s+/).filter(t => t) : [];
     const contextSize = 100;
     
-    // Find first occurrence of any query term
+    // Find first occurrence - prioritize phrases, then terms
     let bestIndex = -1;
-    for (const term of queryTerms) {
-      const index = fullText.toLowerCase().indexOf(term);
+    
+    // First look for phrase matches
+    for (const phrase of quotedPhrases) {
+      const index = fullText.toLowerCase().indexOf(phrase.toLowerCase());
       if (index !== -1 && (bestIndex === -1 || index < bestIndex)) {
         bestIndex = index;
+      }
+    }
+    
+    // Then look for individual term matches if no phrase found
+    if (bestIndex === -1) {
+      for (const term of queryTerms) {
+        const index = fullText.toLowerCase().indexOf(term);
+        if (index !== -1 && (bestIndex === -1 || index < bestIndex)) {
+          bestIndex = index;
+        }
       }
     }
     
@@ -270,10 +407,30 @@ export class MiniSearchEngine {
     if (start > 0) preview = '...' + preview;
     if (end < fullText.length) preview = preview + '...';
     
-    // Highlight matching terms
+    // Highlight phrases first (they take priority)
+    for (const phrase of quotedPhrases) {
+      const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      preview = preview.replace(regex, '[HIGHLIGHT]$&[/HIGHLIGHT]');
+    }
+    
+    // Then highlight individual terms (but not if they're already part of a highlighted phrase)
     for (const term of queryTerms) {
-      const regex = new RegExp(`\\b(${term}\\w*)`, 'gi');
-      preview = preview.replace(regex, '[HIGHLIGHT]$1[/HIGHLIGHT]');
+      // Only highlight terms that aren't already within [HIGHLIGHT] tags
+      const regex = new RegExp(`(?![^\\[]*\\])\\b(${term}\\w*)`, 'gi');
+      preview = preview.replace(regex, (match, p1, offset, string) => {
+        // Check if this match is already inside a highlight
+        const before = string.substring(0, offset);
+        const after = string.substring(offset);
+        const lastHighlightStart = before.lastIndexOf('[HIGHLIGHT]');
+        const lastHighlightEnd = before.lastIndexOf('[/HIGHLIGHT]');
+        const nextHighlightEnd = after.indexOf('[/HIGHLIGHT]');
+        
+        // If we're inside a highlight tag, don't double-highlight
+        if (lastHighlightStart > lastHighlightEnd && nextHighlightEnd !== -1) {
+          return match;
+        }
+        return '[HIGHLIGHT]' + match + '[/HIGHLIGHT]';
+      });
     }
     
     return preview;

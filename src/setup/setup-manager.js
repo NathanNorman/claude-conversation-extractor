@@ -11,7 +11,7 @@ export class SetupManager {
     this.configDir = join(homedir(), '.claude', 'claude_conversations');
     this.configPath = join(this.configDir, 'setup.json');
     this.exportDir = join(homedir(), '.claude', 'claude_conversations');
-    this.indexPath = join(this.configDir, 'search-index.json');
+    // Only using MiniSearch index now (search-index-v2.json)
     this.conversationsPath = join(homedir(), '.claude', 'projects');
   }
 
@@ -137,7 +137,7 @@ export class SetupManager {
       for (const file of files) {
         // Only count conversation exports, not setup files
         if ((file.endsWith('.md') || file.endsWith('.json') || file.endsWith('.html')) && 
-            file !== 'setup.json' && file !== 'search-index.json') {
+            file !== 'setup.json' && file !== 'search-index.json' && file !== 'search-index-v2.json') {
           const filePath = join(this.exportDir, file);
           const fileStat = await stat(filePath);
           
