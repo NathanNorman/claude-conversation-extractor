@@ -558,9 +558,13 @@ async function showLiveSearch(searchInterface = null) {
             if (start > 0) preview = '...' + preview;
             if (end < result.fullText.length) preview = preview + '...';
             
-            // Highlight matching words
+            // Highlight matching words and phrases
             for (const word of result.queryWords || []) {
               const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+              preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+            }
+            for (const phrase of result.queryPhrases || []) {
+              const highlightRegex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
               preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
             }
             
@@ -586,9 +590,13 @@ async function showLiveSearch(searchInterface = null) {
             if (start > 0) preview = '...' + preview;
             if (end < result.fullText.length) preview = preview + '...';
             
-            // Highlight matching words
+            // Highlight matching words and phrases
             for (const word of result.queryWords || []) {
               const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+              preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+            }
+            for (const phrase of result.queryPhrases || []) {
+              const highlightRegex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
               preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
             }
             

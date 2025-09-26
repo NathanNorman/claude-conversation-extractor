@@ -11,6 +11,84 @@ export class IndexedSearch {
     this.indexLoaded = false;
   }
 
+  /**
+   * Parse search query to extract exact phrases (in quotes) and individual terms
+   * Handles escape sequences for quotes and backslashes
+   * Examples:
+   *   'foo bar' -> {terms: ['foo', 'bar'], phrases: []}
+   *   '"foo bar"' -> {terms: [], phrases: ['foo bar']}
+   *   'foo "bar baz"' -> {terms: ['foo'], phrases: ['bar baz']}
+   *   '"escaped \" quote"' -> {terms: [], phrases: ['escaped " quote']}
+   */
+  parseSearchQuery(query) {
+    const phrases = [];
+    const terms = [];
+    
+    // Process the query character by character to handle escaping
+    let current = '';
+    let inQuotes = false;
+    let escaped = false;
+    
+    for (let i = 0; i < query.length; i++) {
+      const char = query[i];
+      
+      if (escaped) {
+        // Add the escaped character literally
+        current += char;
+        escaped = false;
+      } else if (char === '\\') {
+        // Next character will be escaped
+        escaped = true;
+      } else if (char === '"') {
+        // Toggle quote mode
+        if (inQuotes) {
+          // End of quoted phrase
+          if (current.trim()) {
+            phrases.push(current.trim());
+          }
+          current = '';
+          inQuotes = false;
+        } else {
+          // Start of quoted phrase - save any accumulated term first
+          if (current.trim()) {
+            current.trim().split(/\s+/).forEach(t => {
+              if (t.length > 2) terms.push(t.toLowerCase());
+            });
+          }
+          current = '';
+          inQuotes = true;
+        }
+      } else if (char === ' ' && !inQuotes) {
+        // Space outside quotes - end current term
+        if (current.trim()) {
+          const term = current.trim().toLowerCase();
+          if (term.length > 2) {
+            terms.push(term);
+          }
+        }
+        current = '';
+      } else {
+        // Regular character
+        current += char;
+      }
+    }
+    
+    // Handle any remaining content
+    if (current.trim()) {
+      if (inQuotes) {
+        // Unclosed quote - treat as phrase
+        phrases.push(current.trim());
+      } else {
+        // Regular terms
+        current.trim().split(/\s+/).forEach(t => {
+          if (t.length > 2) terms.push(t.toLowerCase());
+        });
+      }
+    }
+    
+    return { terms, phrases };
+  }
+
   async ensureIndexLoaded() {
     if (!this.indexLoaded) {
       try {
@@ -33,14 +111,17 @@ export class IndexedSearch {
       return this.getAllConversations();
     }
     
+    // Parse the query to extract phrases and terms
+    const { terms, phrases } = this.parseSearchQuery(query);
+    
     // Phase 1: Quick keyword lookup (1-5ms)
-    const candidates = await this.findCandidateConversations(query);
+    const candidates = await this.findCandidateConversations(terms, phrases);
     
     // Phase 2: Relevance scoring (5-15ms)
-    const scoredResults = await this.scoreRelevance(candidates, query);
+    const scoredResults = await this.scoreRelevance(candidates, terms, phrases);
     
     // Phase 3: Content preview generation (5-10ms)
-    const enrichedResults = await this.addPreviews(scoredResults, query);
+    const enrichedResults = await this.addPreviews(scoredResults, query, terms, phrases);
     
     const duration = performance.now() - startTime;
     
@@ -52,70 +133,90 @@ export class IndexedSearch {
     };
   }
 
-  async findCandidateConversations(query) {
-    const queryWords = query.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(word => word.length > 2);
-    
-    // If no valid words, return empty
-    if (queryWords.length === 0) {
+  async findCandidateConversations(terms, phrases) {
+    // If no search criteria, return empty
+    if (terms.length === 0 && phrases.length === 0) {
       return [];
     }
     
-    // For multi-term search, find conversations containing ALL terms (AND logic)
-    // Start with conversations containing the first word
     let candidateIndices = null;
     
-    for (const word of queryWords) {
-      const wordIndices = new Set();
+    // First, handle individual terms with AND logic
+    for (const term of terms) {
+      const termIndices = new Set();
       
       // Direct matches
-      if (this.index.invertedIndex[word]) {
-        for (const idx of this.index.invertedIndex[word].conversations) {
-          wordIndices.add(idx);
+      if (this.index.invertedIndex[term]) {
+        for (const idx of this.index.invertedIndex[term].conversations) {
+          termIndices.add(idx);
         }
       }
       
       // Prefix matches - "java" matches "javascript", etc.
       for (const indexedWord in this.index.invertedIndex) {
-        if (indexedWord.startsWith(word) && indexedWord !== word) {
+        if (indexedWord.startsWith(term) && indexedWord !== term) {
           for (const idx of this.index.invertedIndex[indexedWord].conversations) {
-            wordIndices.add(idx);
+            termIndices.add(idx);
           }
         }
       }
       
-      // For the first word, initialize candidateIndices
+      // Apply AND logic for terms
       if (candidateIndices === null) {
-        candidateIndices = wordIndices;
+        candidateIndices = termIndices;
       } else {
-        // For subsequent words, keep only conversations that have both
-        // This implements AND logic - conversation must contain ALL terms
         const intersection = new Set();
         for (const idx of candidateIndices) {
-          if (wordIndices.has(idx)) {
+          if (termIndices.has(idx)) {
             intersection.add(idx);
           }
         }
         candidateIndices = intersection;
         
-        // If no conversations contain all terms so far, stop early
         if (candidateIndices.size === 0) {
           return [];
         }
       }
     }
     
+    // Handle exact phrases - need to check in full text
+    if (phrases.length > 0) {
+      const phraseCandidates = new Set();
+      
+      // For phrases, we need to check the actual text content
+      // Start with all conversations if no terms, or filtered set if we have terms
+      const indicesToCheck = candidateIndices ? 
+        Array.from(candidateIndices) : 
+        Array.from({length: this.index.conversations.length}, (_, i) => i);
+      
+      for (const idx of indicesToCheck) {
+        const conversation = this.index.conversations[idx];
+        if (!conversation) continue;
+        
+        // Check if all phrases exist in this conversation
+        // We'll check in the preview for quick filtering, but ideally should check full text
+        let hasAllPhrases = true;
+        for (const phrase of phrases) {
+          // Simple check in preview and keywords for now
+          const searchText = (conversation.preview + ' ' + conversation.extractedKeywords.join(' ')).toLowerCase();
+          if (!searchText.includes(phrase.toLowerCase())) {
+            hasAllPhrases = false;
+            break;
+          }
+        }
+        
+        if (hasAllPhrases) {
+          phraseCandidates.add(idx);
+        }
+      }
+      
+      candidateIndices = phraseCandidates;
+    }
+    
     return Array.from(candidateIndices || []);
   }
 
-  async scoreRelevance(candidateIndices, query) {
-    const queryWords = query.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(word => word.length > 2);
-    
+  async scoreRelevance(candidateIndices, terms, phrases) {
     const scoredResults = [];
     
     for (const idx of candidateIndices) {
@@ -125,38 +226,53 @@ export class IndexedSearch {
       let score = 0;
       let matchedWords = 0;
       
-      // Score based on keyword matches
-      for (const word of queryWords) {
-        if (conversation.extractedKeywords.includes(word)) {
+      // Score based on individual term matches
+      for (const term of terms) {
+        if (conversation.extractedKeywords.includes(term)) {
           score += 10; // Exact keyword match
           matchedWords++;
         }
         
         // Check frequency
-        if (conversation.keywordFrequency[word]) {
-          score += Math.min(conversation.keywordFrequency[word] * 2, 20);
+        if (conversation.keywordFrequency[term]) {
+          score += Math.min(conversation.keywordFrequency[term] * 2, 20);
         }
         
         // Check in preview
-        if (conversation.preview.toLowerCase().includes(word)) {
+        if (conversation.preview.toLowerCase().includes(term)) {
           score += 3;
         }
         
         // Check in project name
-        if (conversation.project.toLowerCase().includes(word)) {
+        if (conversation.project.toLowerCase().includes(term)) {
           score += 5;
         }
         
         // Partial matches in keywords
         for (const keyword of conversation.extractedKeywords) {
-          if (keyword.includes(word) && keyword !== word) {
+          if (keyword.includes(term) && keyword !== term) {
             score += 2;
           }
         }
       }
       
+      // Bonus score for exact phrase matches
+      for (const phrase of phrases) {
+        // Phrase in preview gets high score
+        if (conversation.preview.toLowerCase().includes(phrase.toLowerCase())) {
+          score += 20;
+          matchedWords += phrase.split(/\s+/).length;
+        }
+        
+        // Phrase in project name
+        if (conversation.project.toLowerCase().includes(phrase.toLowerCase())) {
+          score += 15;
+        }
+      }
+      
       // Calculate relevance percentage
-      const maxPossibleScore = queryWords.length * 35; // Theoretical max per word
+      const totalQueryElements = terms.length + phrases.length;
+      const maxPossibleScore = Math.max(1, (terms.length * 35) + (phrases.length * 35));
       const relevance = Math.min((score / maxPossibleScore), 1.0);
       
       if (relevance > 0.01) { // Threshold for including results
@@ -174,11 +290,9 @@ export class IndexedSearch {
     return scoredResults.sort((a, b) => b.score - a.score);
   }
 
-  async addPreviews(scoredResults, query) {
-    const queryWords = query.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(word => word.length > 2);
+  async addPreviews(scoredResults, query, terms, phrases) {
+    // For highlighting, we need both terms and phrases
+    const searchPatterns = [...terms, ...phrases];
     
     const enrichedResults = [];
     
@@ -206,16 +320,33 @@ export class IndexedSearch {
           }
         }
         
-        // Find all occurrences of the search terms
-        for (const word of queryWords) {
-          const regex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+        // Find all occurrences of the search terms and phrases
+        // First, find individual term occurrences
+        for (const term of terms) {
+          const regex = new RegExp(`\\b(${term}\\w*)`, 'gi');
           let match;
           while ((match = regex.exec(fullText)) !== null) {
             allOccurrences.push({
               index: match.index,
               length: match[0].length,
               word: match[0],
-              queryWord: word
+              queryWord: term,
+              isPhrase: false
+            });
+          }
+        }
+        
+        // Then find exact phrase occurrences
+        for (const phrase of phrases) {
+          const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+          let match;
+          while ((match = regex.exec(fullText)) !== null) {
+            allOccurrences.push({
+              index: match.index,
+              length: match[0].length,
+              word: match[0],
+              queryWord: phrase,
+              isPhrase: true
             });
           }
         }
@@ -238,9 +369,13 @@ export class IndexedSearch {
           if (start > 0) preview = '...' + preview;
           if (end < fullText.length) preview = preview + '...';
           
-          // Highlight all matching words
-          for (const word of queryWords) {
-            const highlightRegex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+          // Highlight all matching terms and phrases
+          for (const term of terms) {
+            const highlightRegex = new RegExp(`\\b(${term}\\w*)`, 'gi');
+            preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+          }
+          for (const phrase of phrases) {
+            const highlightRegex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
             preview = preview.replace(highlightRegex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
           }
         }
@@ -256,7 +391,8 @@ export class IndexedSearch {
           preview: preview,
           occurrences: allOccurrences,  // Store all occurrences for on-demand generation
           fullText: fullText,  // Store full text for on-demand preview generation
-          queryWords: queryWords,  // Store query words for highlighting
+          queryWords: terms,  // Store query terms for highlighting
+          queryPhrases: phrases,  // Store query phrases for highlighting
           currentOccurrenceIndex: 0,  // Track which occurrence is being shown
           totalOccurrences: allOccurrences.length,
           matchedWords: result.matchedWords,
@@ -269,8 +405,12 @@ export class IndexedSearch {
         let preview = conversation.preview;
         
         // Still try to highlight in the static preview
-        for (const word of queryWords) {
-          const regex = new RegExp(`\\b(${word}\\w*)`, 'gi');
+        for (const term of terms) {
+          const regex = new RegExp(`\\b(${term}\\w*)`, 'gi');
+          preview = preview.replace(regex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
+        }
+        for (const phrase of phrases) {
+          const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
           preview = preview.replace(regex, (match) => `[HIGHLIGHT]${match}[/HIGHLIGHT]`);
         }
         
@@ -284,7 +424,8 @@ export class IndexedSearch {
           preview: preview,
           occurrences: [],  // No occurrences in fallback
           fullText: '',  // No full text available
-          queryWords: queryWords,
+          queryWords: terms,
+          queryPhrases: phrases,
           currentOccurrenceIndex: 0,
           totalOccurrences: 0,
           matchedWords: result.matchedWords,
