@@ -58,28 +58,56 @@ export class IndexedSearch {
       .split(/\s+/)
       .filter(word => word.length > 2);
     
-    const candidateIndices = new Set();
+    // If no valid words, return empty
+    if (queryWords.length === 0) {
+      return [];
+    }
     
-    // Find conversations containing any of the query words
+    // For multi-term search, find conversations containing ALL terms (AND logic)
+    // Start with conversations containing the first word
+    let candidateIndices = null;
+    
     for (const word of queryWords) {
+      const wordIndices = new Set();
+      
+      // Direct matches
       if (this.index.invertedIndex[word]) {
         for (const idx of this.index.invertedIndex[word].conversations) {
-          candidateIndices.add(idx);
+          wordIndices.add(idx);
         }
       }
       
-      // Also check for words that START with the query word (for prefix matching)
-      // This allows "java" to match "javascript", "javabean", etc.
+      // Prefix matches - "java" matches "javascript", etc.
       for (const indexedWord in this.index.invertedIndex) {
         if (indexedWord.startsWith(word) && indexedWord !== word) {
           for (const idx of this.index.invertedIndex[indexedWord].conversations) {
-            candidateIndices.add(idx);
+            wordIndices.add(idx);
           }
+        }
+      }
+      
+      // For the first word, initialize candidateIndices
+      if (candidateIndices === null) {
+        candidateIndices = wordIndices;
+      } else {
+        // For subsequent words, keep only conversations that have both
+        // This implements AND logic - conversation must contain ALL terms
+        const intersection = new Set();
+        for (const idx of candidateIndices) {
+          if (wordIndices.has(idx)) {
+            intersection.add(idx);
+          }
+        }
+        candidateIndices = intersection;
+        
+        // If no conversations contain all terms so far, stop early
+        if (candidateIndices.size === 0) {
+          return [];
         }
       }
     }
     
-    return Array.from(candidateIndices);
+    return Array.from(candidateIndices || []);
   }
 
   async scoreRelevance(candidateIndices, query) {

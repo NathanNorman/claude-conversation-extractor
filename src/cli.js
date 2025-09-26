@@ -218,8 +218,13 @@ async function showLiveSearch(searchInterface = null) {
         console.log(colors.dim('  No filters active - showing all repos [Press f to filter]\n'));
       }
       
-      // Search input
-      console.log(colors.primary('🔍 Type to search: ') + colors.highlight(searchTerm) + colors.dim('│'));
+      // Search input with multi-term indicator
+      const queryTerms = searchTerm.trim().split(/\s+/).filter(t => t.length > 2);
+      if (queryTerms.length > 1) {
+        console.log(colors.primary('🔍 Type to search (ALL terms required): ') + colors.highlight(searchTerm) + colors.dim('│'));
+      } else {
+        console.log(colors.primary('🔍 Type to search: ') + colors.highlight(searchTerm) + colors.dim('│'));
+      }
       
       // Results
       if (searchTerm.length >= 2) {
