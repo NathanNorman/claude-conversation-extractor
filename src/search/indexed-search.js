@@ -1,19 +1,8 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
-import chalk from 'chalk';
 
-const colors = {
-  primary: chalk.cyan,
-  success: chalk.green,
-  warning: chalk.yellow,
-  error: chalk.red,
-  info: chalk.cyan,
-  muted: chalk.hex('#808080'),
-  accent: chalk.magenta,
-  highlight: chalk.bold.white,
-  dim: chalk.hex('#606060')
-};
+// Removed unused chalk and colors
 
 export class IndexedSearch {
   constructor() {

@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
-import { join, basename } from 'path';
+import { join } from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 

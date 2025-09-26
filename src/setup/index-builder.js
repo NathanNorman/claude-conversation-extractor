@@ -315,7 +315,7 @@ export class IndexBuilder {
   }
 
   async saveIndex() {
-    const indexDir = join(homedir(), '.claude', 'claude_conversations');
+    // indexDir removed - already part of this.indexPath
     await writeFile(this.indexPath, JSON.stringify(this.index, null, 2));
   }
 
