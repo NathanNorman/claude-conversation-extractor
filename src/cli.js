@@ -309,76 +309,96 @@ async function showLiveSearch(searchInterface = null) {
     
     // Show filter menu
     const showFilterOptions = async () => {
-      // Clear screen and show filter menu
-      process.stdout.write('\u001b[H\u001b[2J');
-      console.log(colors.accent('\n🔧 Filter Options\n'));
-      
-      const filterTypes = [
-        { name: '📁 Filter by Repository', value: 'repo' },
-        { name: '📅 Filter by Date Range (coming soon)', value: 'date', disabled: true },
-        { name: '🧹 Clear All Filters', value: 'clear' },
-        { name: '← Back to Search', value: 'back' }
-      ];
-      
-      // Temporarily disable raw mode for inquirer
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
+      try {
+        // Clear screen and show filter menu
+        process.stdout.write('\u001b[H\u001b[2J');
+        console.log(colors.accent('\n🔧 Filter Options\n'));
+        
+        const filterTypes = [
+          { name: '📁 Filter by Repository', value: 'repo' },
+          { name: '📅 Filter by Date Range (coming soon)', value: 'date', disabled: true },
+          { name: '🧹 Clear All Filters', value: 'clear' },
+          { name: '← Back to Search', value: 'back' }
+        ];
+        
+        // Temporarily disable raw mode for inquirer
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+        
+        const { filterType } = await inquirer.prompt([{
+          type: 'list',
+          name: 'filterType',
+          message: 'Choose filter type:',
+          choices: filterTypes.filter(f => !f.disabled)
+        }]);
+        
+        if (filterType === 'repo') {
+          await showRepoFilter();
+        } else if (filterType === 'clear') {
+          activeFilters.repos.clear();
+          activeFilters.dateRange = null;
+        }
+        
+        // Re-enable raw mode and ensure readline is ready
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(true);
+        }
+        // Ensure stdin is resumed
+        process.stdin.resume();
+        
+        // Refresh search with new filters
+        if (searchTerm.length >= 2) {
+          performSearch();
+        }
+        
+        return filterType !== 'back';
+      } catch (error) {
+        console.error('Filter menu error:', error);
+        // Ensure we restore raw mode even on error
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(true);
+        }
+        process.stdin.resume();
+        return false;
       }
-      
-      const { filterType } = await inquirer.prompt([{
-        type: 'list',
-        name: 'filterType',
-        message: 'Choose filter type:',
-        choices: filterTypes.filter(f => !f.disabled)
-      }]);
-      
-      if (filterType === 'repo') {
-        await showRepoFilter();
-      } else if (filterType === 'clear') {
-        activeFilters.repos.clear();
-        activeFilters.dateRange = null;
-      }
-      
-      // Re-enable raw mode
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(true);
-      }
-      
-      // Refresh search with new filters
-      if (searchTerm.length >= 2) {
-        performSearch();
-      }
-      
-      return filterType !== 'back';
     };
     
     // Show repo filter selection
     const showRepoFilter = async () => {
-      const allRepos = getAllRepos();
-      
-      if (allRepos.length === 0) {
-        console.log(colors.warning('No repositories found'));
-        return;
+      try {
+        const allRepos = getAllRepos();
+        
+        if (allRepos.length === 0) {
+          console.log(colors.warning('No repositories found'));
+          return;
+        }
+        
+        console.log(colors.primary('\n📁 Select Repositories to Filter:\n'));
+        console.log(colors.dim('(Use space to select, Enter to confirm)\n'));
+        
+        const { selectedRepos } = await inquirer.prompt([{
+          type: 'checkbox',
+          name: 'selectedRepos',
+          message: 'Select repositories:',
+          choices: allRepos.map(repo => ({
+            name: repo,
+            value: repo,
+            checked: activeFilters.repos.has(repo)
+          })),
+          pageSize: 15
+        }]);
+        
+        // Update active filters
+        activeFilters.repos.clear();
+        selectedRepos.forEach(repo => activeFilters.repos.add(repo));
+        
+        console.log(colors.success(`\n✓ Filtering by ${selectedRepos.length} repository(s)`));
+        
+      } catch (error) {
+        console.error('Repo filter error:', error);
+        // Don't crash, just return to search
       }
-      
-      console.log(colors.primary('\n📁 Select Repositories to Filter:\n'));
-      console.log(colors.dim('(Use space to select, Enter to confirm)\n'));
-      
-      const { selectedRepos } = await inquirer.prompt([{
-        type: 'checkbox',
-        name: 'selectedRepos',
-        message: 'Select repositories:',
-        choices: allRepos.map(repo => ({
-          name: repo,
-          value: repo,
-          checked: activeFilters.repos.has(repo)
-        })),
-        pageSize: 15
-      }]);
-      
-      // Update active filters
-      activeFilters.repos.clear();
-      selectedRepos.forEach(repo => activeFilters.repos.add(repo));
     };
     
     // Apply filters to results
@@ -478,10 +498,24 @@ async function showLiveSearch(searchInterface = null) {
         }
       } else if (str === 'f' || str === 'F') {
         // Open filter menu
-        process.stdin.removeListener('keypress', handleKeypress);
-        const continueSearch = await showFilterOptions();
-        process.stdin.on('keypress', handleKeypress);
-        await displayScreen();
+        try {
+          // Pause keypress handling
+          process.stdin.removeListener('keypress', handleKeypress);
+          
+          // Show filter options
+          await showFilterOptions();
+          
+          // Resume keypress handling
+          process.stdin.on('keypress', handleKeypress);
+          
+          // Redraw the screen
+          await displayScreen();
+        } catch (error) {
+          console.error('Error in filter menu:', error);
+          // Make sure to re-attach the listener even on error
+          process.stdin.on('keypress', handleKeypress);
+          await displayScreen();
+        }
       } else if (key && key.name === 'backspace') {
         searchTerm = searchTerm.slice(0, -1);
         selectedIndex = 0;
