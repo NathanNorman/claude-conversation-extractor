@@ -240,7 +240,7 @@ export class MiniSearchEngine {
   /**
    * Generate preview with context and highlighting
    */
-  generatePreview(fullText, query, matches) {
+  generatePreview(fullText, query, _matches) {
     if (!fullText) return '';
     
     const queryTerms = query.toLowerCase().split(/\s+/);
