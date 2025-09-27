@@ -2,10 +2,11 @@
 
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { readdir, stat, readFile } from 'fs/promises';
+import { readdir, stat, readFile, appendFile, writeFile, readFile as readFileSync } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import readline from 'readline';
+import { existsSync } from 'fs';
 import { SetupManager } from './setup/setup-manager.js';
 import { showSetupMenu, showAnalytics, confirmExportLocation } from './setup/setup-menu.js';
 import { BulkExtractor } from './setup/bulk-extractor.js';
@@ -27,6 +28,61 @@ const colors = {
   subdued: chalk.hex('#909090')
 };
 
+// Logging configuration
+const LOG_CONFIG_PATH = join(homedir(), '.claude', 'claude_conversations', 'logging.json');
+const DEBUG_LOG_PATH = join(homedir(), '.claude', 'claude_conversations', 'debug.log');
+
+const LOG_LEVELS = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+  OFF: 4
+};
+
+let currentLogLevel = LOG_LEVELS.INFO;
+
+async function loadLogConfig() {
+  try {
+    if (existsSync(LOG_CONFIG_PATH)) {
+      const config = JSON.parse(await readFile(LOG_CONFIG_PATH, 'utf-8'));
+      currentLogLevel = LOG_LEVELS[config.level] ?? LOG_LEVELS.INFO;
+    }
+  } catch (error) {
+    currentLogLevel = LOG_LEVELS.INFO;
+  }
+}
+
+async function log(level, message, ...args) {
+  if (LOG_LEVELS[level] < currentLogLevel) return;
+  
+  const timestamp = new Date().toISOString();
+  const formattedArgs = args.length > 0 ? ' ' + args.map(a => JSON.stringify(a)).join(' ') : '';
+  const logMessage = `[${timestamp}] [${level}] ${message}${formattedArgs}\n`;
+  
+  try {
+    await appendFile(DEBUG_LOG_PATH, logMessage);
+  } catch (error) {
+    // Silently fail if can't write debug log
+  }
+}
+
+const logger = {
+  debug: (msg, ...args) => log('DEBUG', msg, ...args),
+  info: (msg, ...args) => log('INFO', msg, ...args),
+  warn: (msg, ...args) => log('WARN', msg, ...args),
+  error: (msg, ...args) => log('ERROR', msg, ...args)
+};
+
+// Initialize logging
+(async () => {
+  await loadLogConfig();
+  try {
+    await writeFile(DEBUG_LOG_PATH, `=== Debug Log Started: ${new Date().toISOString()} ===\n=== Log Level: ${Object.keys(LOG_LEVELS).find(k => LOG_LEVELS[k] === currentLogLevel)} ===\n`);
+  } catch (error) {
+    // Silently fail
+  }
+})();
 
 // Debounce function for performance
 function debounce(func, wait) {
@@ -472,9 +528,17 @@ async function showLiveSearch(searchInterface = null) {
           choices: filterTypes.filter(f => !f.disabled)
         }]);
         
+        await logger.debug('Filter menu: type selected', { filterType });
+        
         if (filterType === 'repo') {
+          await logger.debug('Opening repo filter, current filters', { count: activeFilters.repos.size });
           await showRepoFilter();
+          await logger.info('Repo filter applied', { 
+            count: activeFilters.repos.size, 
+            repos: Array.from(activeFilters.repos) 
+          });
         } else if (filterType === 'clear') {
+          await logger.info('Clearing all filters');
           activeFilters.repos.clear();
           activeFilters.dateRange = null;
         }
@@ -485,6 +549,8 @@ async function showLiveSearch(searchInterface = null) {
         }
         // Ensure stdin is resumed
         process.stdin.resume();
+        
+        await logger.debug('Before refresh', { searchTermLength: searchTerm.length, activeFilters: activeFilters.repos.size });
         
         // Refresh search or display with new filters
         if (searchTerm.length >= 2) {
@@ -561,8 +627,10 @@ async function showLiveSearch(searchInterface = null) {
         }]);
         
         // Update active filters
+        await logger.debug('Repos selected in menu', { count: selectedRepos.length, repos: selectedRepos });
         activeFilters.repos.clear();
         selectedRepos.forEach(repo => activeFilters.repos.add(repo));
+        await logger.info('Active filters updated', { count: activeFilters.repos.size, repos: Array.from(activeFilters.repos) });
         
         console.log(colors.success(`\n✓ Filtering by ${selectedRepos.length} repository(s)`));
         
@@ -574,19 +642,34 @@ async function showLiveSearch(searchInterface = null) {
     
     // Apply filters to results
     const applyFilters = (searchResults) => {
+      logger.debug('applyFilters called', { 
+        inputCount: searchResults.length, 
+        activeFilterCount: activeFilters.repos.size 
+      });
+      
       if (activeFilters.repos.size === 0) {
+        logger.debug('No filters active, returning all results');
         return searchResults;
       }
       
-      return searchResults.filter(result => {
+      const filtered = searchResults.filter(result => {
         const project = result.project || result.file?.project;
         return activeFilters.repos.has(project);
       });
+      
+      logger.info('Filter applied', { 
+        before: searchResults.length, 
+        after: filtered.length,
+        activeRepos: Array.from(activeFilters.repos)
+      });
+      
+      return filtered;
     };
     
     // Debounced search to prevent excessive API calls
     const performSearch = debounce(async () => {
       if (searchTerm.length >= 2) {
+        await logger.debug('performSearch called', { searchTerm, hasInterface: !!searchInterface });
         isSearching = true;
         await displayScreen();
         
@@ -595,6 +678,7 @@ async function showLiveSearch(searchInterface = null) {
           let searchResults;
           if (searchInterface) {
             const searchResult = await searchInterface.search(searchTerm);
+            await logger.debug('Search completed', { totalFound: searchResult.totalFound });
             searchResults = searchResult.results.map(r => ({
               ...r,
               name: r.exportedFile ? r.exportedFile.split('/').pop() : 'conversation.jsonl',
@@ -606,9 +690,11 @@ async function showLiveSearch(searchInterface = null) {
             searchResults = await extractor.searchConversations(searchTerm, conversations);
           }
           
+          await logger.debug('Before applyFilters', { resultCount: searchResults.length });
           // Apply active filters
           results = applyFilters(searchResults);
           selectedIndex = 0;
+          await logger.debug('After applyFilters', { resultCount: results.length });
         } catch (error) {
           results = [];
           console.error('Search error:', error);
