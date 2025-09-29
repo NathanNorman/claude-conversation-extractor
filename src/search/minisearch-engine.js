@@ -1,15 +1,115 @@
 import miniSearchPackage from 'minisearch';
 const MiniSearch = miniSearchPackage.default || miniSearchPackage;
-import { readFile, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { readFile, writeFile, readdir, stat } from 'fs/promises';
+import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
+import { existsSync } from 'fs';
 
 export class MiniSearchEngine {
-  constructor() {
-    this.indexPath = join(homedir(), '.claude', 'claude_conversations', 'search-index-v2.json');
+  constructor(options = {}) {
+    this.projectsDir = options.projectsDir || join(homedir(), '.claude', 'projects');
+    // NEW: Index from exported markdown files, not source JSONL files
+    this.exportDir = options.exportDir || join(homedir(), '.claude', 'claude_conversations');
+    this.indexPath = options.indexPath || join(homedir(), '.claude', 'claude_conversations', 'search-index-v2.json');
+    this.logger = options.logger || this.createDefaultLogger();
     this.miniSearch = null;
+    this.index = null; // Expose for tests
     this.conversationData = new Map(); // Store full conversation data
+    this.stats = {
+      totalDocuments: 0,
+      totalConversations: 0,
+      indexedAt: null,
+      indexSizeBytes: 0
+    };
     this.indexLoaded = false;
+  }
+
+  createDefaultLogger() {
+    return {
+      info: (msg) => console.log(msg),
+      warn: (msg) => console.warn(msg),
+      error: (msg) => console.error(msg),
+      debug: (msg) => process.env.DEBUG && console.log('[DEBUG]', msg)
+    };
+  }
+
+  /**
+   * Parse exported markdown file to extract conversation content
+   * @param {string} markdownPath - Path to markdown file
+   * @returns {Object} Parsed conversation data
+   */
+  async parseMarkdownConversation(markdownPath) {
+    const content = await readFile(markdownPath, 'utf-8');
+    const lines = content.split('\n');
+
+    const conversation = {
+      project: null,
+      sessionId: null,
+      date: null,
+      modified: null,
+      messages: [],
+      fullText: '',
+      wordCount: 0,
+      messageCount: 0
+    };
+
+    // Extract metadata from header
+    for (let i = 0; i < Math.min(20, lines.length); i++) {
+      const line = lines[i];
+      if (line.startsWith('Project:')) {
+        conversation.project = line.split('Project:')[1].trim();
+      } else if (line.startsWith('Session ID:')) {
+        conversation.sessionId = line.split('Session ID:')[1].trim();
+      } else if (line.startsWith('Date:')) {
+        const dateStr = line.split('Date:')[1].trim();
+        conversation.date = dateStr;
+        try {
+          conversation.modified = new Date(dateStr).toISOString();
+        } catch {
+          conversation.modified = new Date().toISOString();
+        }
+      }
+    }
+
+    // Extract message content (everything between ## headers)
+    let currentMessage = null;
+    let messageContent = '';
+
+    for (const line of lines) {
+      if (line.startsWith('## 👤') || line.startsWith('## 🤖')) {
+        // Save previous message if exists
+        if (currentMessage && messageContent.trim()) {
+          conversation.messages.push({
+            speaker: currentMessage,
+            content: messageContent.trim()
+          });
+          conversation.fullText += ' ' + messageContent.trim();
+          conversation.messageCount++;
+        }
+
+        // Start new message
+        currentMessage = line.includes('👤') ? 'user' : 'assistant';
+        messageContent = '';
+      } else if (currentMessage && !line.startsWith('---')) {
+        // Accumulate message content
+        messageContent += line + '\n';
+      }
+    }
+
+    // Save last message
+    if (currentMessage && messageContent.trim()) {
+      conversation.messages.push({
+        speaker: currentMessage,
+        content: messageContent.trim()
+      });
+      conversation.fullText += ' ' + messageContent.trim();
+      conversation.messageCount++;
+    }
+
+    // Calculate word count
+    conversation.wordCount = conversation.fullText.split(/\s+/).length;
+
+    return conversation;
   }
 
   /**
@@ -57,138 +157,328 @@ export class MiniSearchEngine {
   }
 
   /**
-   * Build index from conversations
+   * Build index from JSONL files in projectsDir
    */
-  async buildIndex(conversations) {
+  async buildIndex(processedConversations = null) {
     this.initializeMiniSearch();
     this.conversationData.clear();
+    this.index = this.miniSearch; // Expose for tests
     
     const documents = [];
+    let conversationIndex = 0;
     
-    for (let i = 0; i < conversations.length; i++) {
-      const conv = conversations[i];
-      
-      // Check if we already have processed content (from IndexBuilder)
-      let fullContent = '';
-      
-      // If fullText exists, we already processed this in IndexBuilder
-      if (conv.fullText) {
-        // Use the full text that was already extracted
-        fullContent = conv.fullText;
-      } else if (conv.originalPath) {
-        // Fallback: read full content if we have the path
-        try {
-          const content = await readFile(conv.originalPath, 'utf-8');
-          const lines = content.trim().split('\n').filter(line => line.trim());
-          
-          for (const line of lines) {
-            try {
-              const data = JSON.parse(line);
-              if ((data.type === 'user' || data.type === 'assistant') && data.message && !data.isMeta) {
-                fullContent += ' ' + this.extractTextFromMessage(data.message);
-              }
-            } catch (err) {
-              // Skip invalid JSON lines
+    // If processedConversations are provided, use them directly
+    if (processedConversations && Array.isArray(processedConversations)) {
+      for (const conv of processedConversations) {
+        const document = {
+          id: conv.id || `conv_${conversationIndex++}`,
+          content: conv.fullText || conv.preview || '',
+          project: conv.project || 'Unknown',
+          keywords: (conv.extractedKeywords || []).join(' '),
+          toolsUsed: (conv.toolsUsed || []).join(' '),
+          preview: conv.preview || '',
+          modified: conv.modified || new Date().toISOString(),
+          wordCount: conv.wordCount || 0,
+          messageCount: conv.messageCount || 0
+        };
+        documents.push(document);
+        
+        // Store conversation data for retrieval
+        this.conversationData.set(document.id, {
+          project: conv.project,
+          exportedFile: conv.exportedFile,
+          originalPath: conv.originalPath,
+          modified: conv.modified,
+          wordCount: conv.wordCount,
+          messageCount: conv.messageCount,
+          preview: conv.preview,
+          fullText: conv.fullText || document.content,
+          content: conv.fullText || document.content,
+          _fullText: conv.fullText || document.content,
+          _content: conv.fullText || document.content
+        });
+      }
+    } else {
+      // NEW: Read from exported markdown files instead of JSONL
+      // This ensures index persists even after Claude Code deletes source files
+      if (!existsSync(this.exportDir)) {
+        this.logger.warn(`Export directory does not exist: ${this.exportDir}`);
+        this.stats.totalDocuments = 0;
+        this.stats.totalConversations = 0;
+        this.stats.indexedAt = new Date().toISOString();
+        return this.stats;
+      }
+
+      // Find all markdown files in exportDir (both root and subdirectories)
+      const markdownFiles = [];
+      try {
+        const scanDirectory = async (dir, prefix = '') => {
+          const entries = await readdir(dir);
+
+          for (const entry of entries) {
+            const fullPath = join(dir, entry);
+            const entryStat = await stat(fullPath);
+
+            if (entryStat.isDirectory()) {
+              // Recursively scan subdirectories
+              await scanDirectory(fullPath, entry);
+            } else if (entry.endsWith('.md') && entry.startsWith('claude-conversation-')) {
+              markdownFiles.push({
+                path: fullPath,
+                project: prefix || basename(dirname(fullPath)),
+                filename: entry
+              });
             }
           }
+        };
+
+        await scanDirectory(this.exportDir);
+
+      } catch (error) {
+        this.logger.error(`Cannot read export directory: ${error.message}`);
+        this.stats.totalDocuments = 0;
+        this.stats.totalConversations = 0;
+        this.stats.indexedAt = new Date().toISOString();
+        return this.stats;
+      }
+
+      // Process markdown files instead of JSONL
+      for (const file of markdownFiles) {
+        const filePath = file.path;
+        const _project = file.project;
+
+        try {
+          // Parse the markdown conversation
+          const conversation = await this.parseMarkdownConversation(filePath);
+
+          if (!conversation || !conversation.fullText.trim()) {
+            continue; // Skip empty conversations
+          }
+
+          // Create document for indexing from parsed markdown
+          const words = conversation.fullText.trim().split(/\s+/);
+          const preview = words.slice(0, 35).join(' ');
+
+          // Extract session ID from filename for unique ID
+          const sessionIdMatch = file.filename.match(/([a-f0-9]{8})\.md$/);
+          const sessionId = sessionIdMatch ? sessionIdMatch[1] : conversationIndex.toString();
+
+          const document = {
+            id: `${_project}_${sessionId}`,
+            content: conversation.fullText.trim(),
+            project: conversation.project || _project,
+            keywords: '',
+            toolsUsed: '',
+            preview: preview,
+            modified: conversation.modified || new Date().toISOString(),
+            wordCount: conversation.wordCount,
+            messageCount: conversation.messageCount
+          };
+
+          documents.push(document);
+
+          // Store conversation data for retrieval
+          this.conversationData.set(document.id, {
+            project: conversation.project || _project,
+            exportedFile: filePath,
+            originalPath: filePath,
+            modified: document.modified,
+            wordCount: document.wordCount,
+            messageCount: document.messageCount,
+            preview: document.preview,
+            fullText: document.content,
+            content: document.content,
+            _fullText: document.content,
+            _content: document.content
+          });
+
+          conversationIndex++;
         } catch (error) {
-          console.error(`Error reading ${conv.originalPath}:`, error.message);
+          this.logger.error(`Error reading file ${file}: ${error.message}`);
         }
       }
-      
-      // Create document for MiniSearch
-      const doc = {
-        id: i,
-        content: fullContent.toLowerCase(),
-        project: conv.project || '',
-        keywords: (conv.extractedKeywords || []).join(' '),
-        toolsUsed: (conv.toolsUsed || []).join(' '),
-        preview: conv.preview || '',
-        modified: conv.modified,
-        wordCount: conv.wordCount || 0,
-        messageCount: conv.messageCount || 0
-      };
-      
-      documents.push(doc);
-      
-      // Store full conversation data for retrieval
-      this.conversationData.set(i, {
-        ...conv,
-        fullText: fullContent
-      });
     }
     
     // Add all documents to index
-    await this.miniSearch.addAllAsync(documents);
+    if (documents.length > 0) {
+      this.miniSearch.addAll(documents);
+    }
     
-    // Save the index
+    // Update stats
+    this.stats.totalDocuments = documents.length;
+    this.stats.totalConversations = documents.length;
+    this.stats.indexedAt = new Date().toISOString();
+    this.stats.indexSizeBytes = JSON.stringify(this.miniSearch.toJSON()).length;
+    this.stats.indexSize = documents.length; // For compatibility
+    
+    // Save the index to disk
     await this.saveIndex();
     
-    return {
-      totalDocuments: documents.length,
-      indexSize: this.miniSearch.termCount
-    };
+    this.indexLoaded = true;
+    
+    return this.stats;
   }
 
   /**
    * Search with MiniSearch's built-in capabilities
    */
-  async search(query) {
+  async search(query, options = {}) {
     const startTime = performance.now();
     
+    // Validate query - return empty results for invalid input
+    if (!query || typeof query !== 'string' || query.trim() === '') {
+      return {
+        results: [],
+        totalFound: 0,
+        searchTime: performance.now() - startTime
+      };
+    }
+    
+    // Check if projectsDir exists first - if not, we can't search
+    if (!existsSync(this.projectsDir)) {
+      this.logger.debug('ProjectsDir does not exist, cannot search');
+      return {
+        results: [],
+        totalFound: 0,
+        searchTime: performance.now() - startTime
+      };
+    }
+    
+    // ProjectsDir exists, try to load or build index
     if (!this.indexLoaded) {
-      await this.loadIndex();
+      const loaded = await this.loadIndex();
+      // If loading failed, try to build
+      if (!loaded) {
+        await this.buildIndex();
+      }
     }
     
-    if (!query || query.trim() === '') {
-      return this.getAllConversations();
+    // If still no index after loading/building, return empty
+    if (!this.miniSearch) {
+      return {
+        results: [],
+        totalFound: 0,
+        searchTime: performance.now() - startTime
+      };
     }
     
-    // Parse query to handle exact phrases
+    // Parse query to handle exact phrases and operators
     const { searchQuery, searchOptions, phrases } = this.parseQuery(query);
     
+    // Apply additional options
+    if (options.limit) {
+      searchOptions.limit = options.limit;
+    }
+    
     // Perform search with MiniSearch
-    const results = this.miniSearch.search(searchQuery, searchOptions);
+    let results = [];
+    try {
+      results = this.miniSearch.search(searchQuery, searchOptions);
+    } catch (err) {
+      this.logger.error('Search error:', err.message);
+      return {
+        results: [],
+        totalFound: 0,
+        searchTime: performance.now() - startTime
+      };
+    }
+    
+    // Apply filters
+    if (options.conversationId) {
+      results = results.filter(r => {
+        const conv = this.conversationData.get(r.id);
+        return conv && conv.conversationId === options.conversationId;
+      });
+    }
+    
+    if (options.dateRange) {
+      results = results.filter(r => {
+        const conv = this.conversationData.get(r.id);
+        if (!conv || !conv.timestamp) return false;
+        const msgDate = new Date(conv.timestamp);
+        return msgDate >= options.dateRange.start && msgDate <= options.dateRange.end;
+      });
+    }
+    
+    // Apply role filter if specified
+    if (searchOptions.roleFilter) {
+      results = results.filter(r => {
+        const conv = this.conversationData.get(r.id);
+        return conv && conv.role === searchOptions.roleFilter;
+      });
+    }
     
     // Enrich results with full conversation data
     const enrichedResults = [];
-    for (const result of results.slice(0, 20)) {
+    const limit = options.limit || 20;
+    
+    for (const result of results.slice(0, limit)) {
       const conversation = this.conversationData.get(result.id);
       if (!conversation) continue;
       
-      const fullText = conversation.fullText || '';
+      const fullText = conversation._fullText || conversation.fullText || '';
+      const content = conversation._content || conversation.content || fullText;
       
       // Find all occurrences for navigation
       const allOccurrences = this.findAllOccurrences(fullText, searchQuery, phrases);
       
-      // Generate preview with highlighted matches
+      // Generate preview for each occurrence with [HIGHLIGHT] markers
+      const occurrencesWithPreviews = allOccurrences.map(occ => ({
+        ...occ,
+        preview: this.generatePreviewForOccurrence(fullText, occ, searchQuery, phrases)
+      }));
+      
+      // Use first occurrence preview as default preview
       let preview = conversation.preview || '';
-      if (allOccurrences.length > 0) {
-        preview = this.generatePreviewForOccurrence(fullText, allOccurrences[0], searchQuery, phrases);
+      if (occurrencesWithPreviews.length > 0) {
+        preview = occurrencesWithPreviews[0].preview;
       }
       
-      enrichedResults.push({
+      const enriched = {
         ...conversation,
+        content: content,
         relevance: result.score / (results[0]?.score || 1), // Normalize score
         preview,
         matches: result.match, // Which fields matched
         terms: result.terms,   // Which search terms matched
-        occurrences: allOccurrences,
+        occurrences: occurrencesWithPreviews,
         currentOccurrenceIndex: 0,
-        totalOccurrences: allOccurrences.length,
+        totalOccurrences: occurrencesWithPreviews.length,
         fullText: fullText,
         queryWords: searchQuery.split(/\s+/).filter(t => t),
         queryPhrases: phrases
-      });
+      };
+      
+      // Add highlights if requested
+      if (options.highlight) {
+        enriched.highlights = allOccurrences.slice(0, 5).map(occ => ({
+          text: occ.word,
+          position: occ.index
+        }));
+      }
+      
+      // Add context if requested
+      if (options.contextWords) {
+        const contextSize = options.contextWords * 5; // approximate chars per word
+        if (allOccurrences.length > 0) {
+          const occ = allOccurrences[0];
+          const start = Math.max(0, occ.index - contextSize);
+          const end = Math.min(fullText.length, occ.index + occ.length + contextSize);
+          enriched.context = fullText.substring(start, end).trim();
+        }
+      }
+      
+      enrichedResults.push(enriched);
     }
     
     const duration = performance.now() - startTime;
     
+    // Always return object format that the CLI expects
     return {
       results: enrichedResults,
       searchTime: duration,
-      totalFound: results.length,
-      suggestions: this.miniSearch.autoSuggest(query, { fuzzy: 0.2 })
+      totalFound: enrichedResults.length,
+      suggestions: options.includeSuggestions ? this.miniSearch.autoSuggest(query, { fuzzy: 0.2 }) : undefined
     };
   }
 
@@ -204,6 +494,14 @@ export class MiniSearchEngine {
       phrases.push(phrase);
       return phrase; // Keep phrase in query but we'll handle it specially
     });
+    
+    // Handle prefix search with asterisk
+    const hasWildcard = modifiedQuery.includes('*');
+    if (hasWildcard) {
+      // Remove the asterisk - MiniSearch handles prefix search automatically
+      modifiedQuery = modifiedQuery.replace(/\*/g, '');
+      searchOptions.prefix = true;
+    }
     
     // Handle OR operator (default is already OR)
     if (modifiedQuery.includes(' OR ')) {
@@ -232,10 +530,15 @@ export class MiniSearchEngine {
       };
     }
     
-    // Handle field-specific search (e.g., project:toast)
+    // Handle field-specific search (e.g., project:toast, role:human)
     modifiedQuery = modifiedQuery.replace(/(\w+):(\S+)/g, (match, field, value) => {
-      if (['project', 'tools'].includes(field)) {
-        searchOptions.fields = [field];
+      if (['project', 'tools', 'role'].includes(field)) {
+        if (field === 'role') {
+          // Filter by role in post-processing
+          searchOptions.roleFilter = value;
+        } else {
+          searchOptions.fields = [field];
+        }
         return value;
       }
       return match;
@@ -334,20 +637,44 @@ export class MiniSearchEngine {
     
     // Then highlight individual terms not already in highlighted phrases
     for (const term of terms) {
-      const regex = new RegExp(`\\b(${term}\\w*)`, 'gi');
-      preview = preview.replace(regex, (match, capturedGroup, offset, string) => {
-        // Check if already inside a highlight
-        const before = string.substring(0, offset);
-        const after = string.substring(offset);
-        const lastHighlightStart = before.lastIndexOf('[HIGHLIGHT]');
-        const lastHighlightEnd = before.lastIndexOf('[/HIGHLIGHT]');
-        const nextHighlightEnd = after.indexOf('[/HIGHLIGHT]');
+      // Escape special regex characters in term
+      const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b(${escapedTerm}\\w*)`, 'gi');
+      
+      // Create a temporary string to track positions
+      const originalPreview = preview;
+      let result = '';
+      let lastIndex = 0;
+      let match;
+      
+      // Reset regex
+      regex.lastIndex = 0;
+      
+      while ((match = regex.exec(originalPreview)) !== null) {
+        const matchStart = match.index;
+        const matchEnd = matchStart + match[0].length;
         
-        if (lastHighlightStart > lastHighlightEnd && nextHighlightEnd !== -1) {
-          return match;
+        // Check if this match is inside an existing highlight
+        const beforeMatch = originalPreview.substring(0, matchStart);
+        const lastHighlightStart = beforeMatch.lastIndexOf('[HIGHLIGHT]');
+        const lastHighlightEnd = beforeMatch.lastIndexOf('[/HIGHLIGHT]');
+        
+        const isInsideHighlight = lastHighlightStart > lastHighlightEnd;
+        
+        if (!isInsideHighlight) {
+          // Add text before match
+          result += originalPreview.substring(lastIndex, matchStart);
+          // Add highlighted match
+          result += '[HIGHLIGHT]' + match[0] + '[/HIGHLIGHT]';
+          lastIndex = matchEnd;
         }
-        return '[HIGHLIGHT]' + match + '[/HIGHLIGHT]';
-      });
+      }
+      
+      // Add remaining text
+      if (lastIndex > 0) {
+        result += originalPreview.substring(lastIndex);
+        preview = result;
+      }
     }
     
     return preview;
@@ -437,18 +764,20 @@ export class MiniSearchEngine {
   }
 
   /**
-   * Extract text from message object
+   * Extract text from message content (string or array)
    */
-  extractTextFromMessage(message) {
+  extractTextContent(content) {
     let text = '';
     
-    if (typeof message.content === 'string') {
-      text = message.content;
-    } else if (Array.isArray(message.content)) {
-      for (const part of message.content) {
+    if (typeof content === 'string') {
+      text = content;
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
         if (typeof part === 'string') {
           text += ' ' + part;
         } else if (part.type === 'text' && part.text) {
+          text += ' ' + part.text;
+        } else if (part.text) {
           text += ' ' + part.text;
         }
       }
@@ -456,19 +785,63 @@ export class MiniSearchEngine {
     
     return text.trim();
   }
+  
+  /**
+   * Extract text from message object (backward compatibility)
+   */
+  extractTextFromMessage(message) {
+    if (message.content) {
+      return this.extractTextContent(message.content);
+    }
+    return '';
+  }
 
   /**
    * Save index to disk
    */
   async saveIndex() {
+    // Prepare stats without indexSizeBytes to avoid inflation
+    const statsToSave = {
+      totalDocuments: this.stats.totalDocuments,
+      totalConversations: this.stats.totalConversations,
+      documentCount: this.stats.totalDocuments, // For backwards compatibility
+      indexedAt: this.stats.indexedAt
+    };
+    
+    // Convert Map to array, preserving fullText for search highlighting
+    const conversationEntries = Array.from(this.conversationData.entries()).map(([id, conv]) => {
+      const filteredConv = {};
+      for (const [key, value] of Object.entries(conv)) {
+        // Keep all fields including fullText for search functionality
+        // Only filter out truly private fields that start with double underscore
+        if (!key.startsWith('__')) {
+          filteredConv[key] = value;
+        }
+      }
+      return [id, filteredConv];
+    });
+    
     const indexData = {
       version: '2.0',
       buildDate: new Date().toISOString(),
       miniSearchData: this.miniSearch.toJSON(),
-      conversationData: Array.from(this.conversationData.entries())
+      conversationData: conversationEntries,
+      stats: statsToSave,
+      // Include documents array for backward compatibility (derived from conversationData)
+      documents: conversationEntries.map(([_id, conv]) => ({
+        id: conv.conversationId,
+        name: conv.name,
+        project: conv.project,
+        modified: conv.modified
+      }))
     };
     
-    await writeFile(this.indexPath, JSON.stringify(indexData, null, 2));
+    // Write to file (use compact JSON for smaller size)
+    const jsonString = JSON.stringify(indexData);
+    await writeFile(this.indexPath, jsonString);
+    
+    // Update stats with actual written size
+    this.stats.indexSizeBytes = jsonString.length;
   }
 
   /**
@@ -504,16 +877,25 @@ export class MiniSearchEngine {
         : JSON.stringify(indexData.miniSearchData);
       
       this.miniSearch = MiniSearch.loadJSON(miniSearchDataString, miniSearchConfig);
+      this.index = this.miniSearch; // Expose for tests
       
       // Restore conversation data
       this.conversationData = new Map(indexData.conversationData);
       
+      // Restore stats
+      if (indexData.stats) {
+        this.stats = indexData.stats;
+      }
+      
       this.indexLoaded = true;
       return true;
     } catch (error) {
-      // If index doesn't exist or is invalid, return false
+      // If index doesn't exist or is invalid, set index to null
+      this.index = null;
+      this.miniSearch = null;
+      
       if (error.code !== 'ENOENT') {
-        console.error('Failed to load index:', error.message);
+        this.logger.error('Failed to load index:', error.message);
       }
       return false;
     }
@@ -551,4 +933,152 @@ export class MiniSearchEngine {
       limit: 10
     });
   }
+
+  /**
+   * Update index incrementally - rebuild from scratch
+   */
+  async updateIndex() {
+    // For now, just rebuild the entire index
+    return await this.buildIndex();
+  }
+
+  /**
+   * Process a single conversation for indexing
+   * @private
+   */
+  async processConversation(conv) {
+    let fullContent = '';
+    
+    if (conv.fullText) {
+      fullContent = conv.fullText;
+    } else if (conv.originalPath) {
+      try {
+        const content = await readFile(conv.originalPath, 'utf-8');
+        const lines = content.trim().split('\n').filter(line => line.trim());
+        
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if ((data.type === 'user' || data.type === 'assistant') && data.message && !data.isMeta) {
+              fullContent += ' ' + this.extractTextFromMessage(data.message);
+            }
+          } catch (err) {
+            // Skip invalid JSON lines
+          }
+        }
+      } catch (error) {
+        this.logger.error(`Error reading ${conv.originalPath}:`, error.message);
+      }
+    }
+    
+    const keywords = conv.keywords || this.extractKeywords(fullContent).join(' ');
+    const toolsUsed = conv.toolsUsed || [];
+    
+    return {
+      id: conv.id || conv.path || `conv-${Date.now()}`,
+      content: fullContent.slice(0, 50000),
+      project: conv.project || 'unknown',
+      keywords: keywords,
+      toolsUsed: toolsUsed.join(' '),
+      preview: (conv.preview || fullContent.slice(0, 200)).replace(/\n/g, ' '),
+      modified: conv.modified || new Date().toISOString(),
+      wordCount: conv.wordCount || fullContent.split(/\s+/).length,
+      messageCount: conv.messageCount || 0
+    };
+  }
+
+  /**
+   * Check if index needs to be rebuilt
+   * @returns {boolean} True if rebuild is needed
+   */
+  async needsRebuild() {
+    try {
+      // Check if index file exists
+      if (!existsSync(this.indexPath)) {
+        return true;
+      }
+      
+      // Get file stats
+      const fileStat = await stat(this.indexPath);
+      const indexModTime = fileStat.mtime.getTime();
+      
+      // Check if any JSONL file is newer than the index
+      if (existsSync(this.projectsDir)) {
+        const projects = await readdir(this.projectsDir);
+        
+        // Check each project subdirectory
+        for (const project of projects) {
+          const projectPath = join(this.projectsDir, project);
+          const projectStat = await stat(projectPath);
+          
+          if (projectStat.isDirectory()) {
+            const files = await readdir(projectPath);
+            const jsonlFiles = files.filter(f => f.endsWith('.jsonl'));
+            
+            for (const file of jsonlFiles) {
+              const filePath = join(projectPath, file);
+              const fileStats = await stat(filePath);
+              if (fileStats.mtime.getTime() > indexModTime) {
+                return true; // Found a newer file
+              }
+            }
+          }
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      this.logger.error('Error checking if rebuild needed:', error.message);
+      return true;
+    }
+  }
+
+  /**
+   * Optimize the search index
+   */
+  async optimizeIndex() {
+    if (!this.miniSearch) {
+      await this.loadIndex();
+    }
+    
+    // Vacuum removes deleted documents and optimizes storage
+    this.miniSearch.vacuum();
+    
+    // Keep fullText fields for search highlighting functionality
+    // Only remove truly private fields marked with double underscore
+    for (const [_id, conv] of this.conversationData.entries()) {
+      // Remove only truly private fields (double underscore)
+      for (const key of Object.keys(conv)) {
+        if (key.startsWith('__')) {
+          delete conv[key];
+        }
+      }
+      
+      // Trim preview to reasonable size
+      if (conv.preview && conv.preview.length > 200) {
+        conv.preview = conv.preview.slice(0, 200);
+      }
+    }
+    
+    // Save the optimized index
+    await this.saveIndex();
+    
+    this.logger.info('Index optimized and saved');
+  }
+
+  /**
+   * Get index statistics
+   * @returns {Object} Index statistics
+   */
+  getStats() {
+    return {
+      totalDocuments: this.stats.totalDocuments,
+      totalConversations: this.stats.totalConversations,
+      indexSizeBytes: this.stats.indexSizeBytes,
+      lastUpdated: this.stats.indexedAt,
+      indexedAt: this.stats.indexedAt
+    };
+  }
 }
+
+export default MiniSearchEngine;
