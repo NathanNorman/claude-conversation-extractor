@@ -454,14 +454,19 @@ async function showLiveSearch(searchInterface = null) {
     const state = new LiveSearchState();
     let showFilterMenu = false;
     let searchStartTime = 0;
-    
+
+    // Enter alternate screen buffer (like vim/less) to avoid polluting scrollback
+    if (process.stdout.isTTY) {
+      process.stdout.write('\u001b[?1049h');
+    }
+
     // Create readline interface
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: true
     });
-    
+
     // Enable keypress events
     readline.emitKeypressEvents(process.stdin, rl);
     if (process.stdin.isTTY) {
@@ -485,7 +490,13 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.accent(`│${' '.repeat(Math.floor((headerWidth - 32) / 2))}🔍 Interactive Conversation Search${' '.repeat(Math.ceil((headerWidth - 32) / 2))}│`));
       console.log(colors.accent(`└${'─'.repeat(headerWidth)}┘`));
       
-      console.log(colors.success(`✅ Found ${conversations.length} conversations\n`));
+      // Show archive count if using indexed search, otherwise show JSONL count
+      const conversationCount = searchInterface ?
+        (searchInterface.getStats?.()?.totalConversations || conversations.length) :
+        conversations.length;
+      const archiveNote = searchInterface && conversationCount > conversations.length * 2 ?
+        colors.dim(' (includes historical archive)') : '';
+      console.log(colors.success(`✅ Found ${conversationCount} conversations${archiveNote}\n`));
       
       // Display active filters with prominent indicator
       const hasActiveFilters = state.activeFilters.repos.size > 0 || state.activeFilters.dateRange;
@@ -621,7 +632,7 @@ async function showLiveSearch(searchInterface = null) {
             if (isSelected && result.preview) {
               // Show more context for selected item with word wrapping and highlighting
               const preview = result.preview;
-              const maxWidth = 90;
+              const maxWidth = 135;
               
               // Function to render text with highlights
               const renderWithHighlights = (text) => {
@@ -693,18 +704,48 @@ async function showLiveSearch(searchInterface = null) {
         }
       } else {
         // Show filtered conversations when no search term
-        const filteredConversations = applyFilters(conversations.map(conv => ({
+        // If we have an indexed archive, show all indexed conversations instead of just JSONL files
+        let conversationsToShow = conversations;
+        const hasArchive = searchInterface &&
+                           searchInterface.conversationData &&
+                           searchInterface.conversationData.size > conversations.length * 2;
+
+        if (hasArchive) {
+          // Use the indexed archive
+          conversationsToShow = Array.from(searchInterface.conversationData.values())
+            .map(conv => ({
+              project: conv.project,
+              modified: conv.modified ? new Date(conv.modified) : new Date(),
+              name: conv.project,
+              path: conv.originalPath || conv.exportedFile,
+              preview: '',
+              relevance: 1.0
+            }))
+            .sort((a, b) => b.modified.getTime() - a.modified.getTime());
+        }
+
+        const filteredConversations = applyFilters(conversationsToShow.map(conv => ({
           ...conv,
           name: conv.project,
           preview: '',
           relevance: 1.0
         })), state.activeFilters);
-        
+
         if (filteredConversations.length > 0) {
-          console.log(colors.info(`\n📋 Showing ${filteredConversations.length} conversation${filteredConversations.length > 1 ? 's' : ''}${state.activeFilters.repos.size > 0 ? ' (filtered)' : ''}:\n`));
+          // Show total from archive or from conversations
+          const totalAvailable = hasArchive ? searchInterface.conversationData.size : conversationsToShow.length;
+          const isFiltered = filteredConversations.length < totalAvailable || state.activeFilters.repos.size > 0;
+
+          let countDisplay;
+          if (isFiltered) {
+            countDisplay = `${filteredConversations.length} of ${totalAvailable} conversations (filtered)`;
+          } else {
+            countDisplay = `${totalAvailable} conversation${totalAvailable > 1 ? 's' : ''}`;
+          }
+          console.log(colors.info(`\n📋 Showing ${countDisplay}:\n`));
           
           // Calculate scrolling window for conversations
-          const windowSize = 5;
+          const windowSize = 10;
           let windowStart = 0;
           
           // Adjust window to keep selected item visible
@@ -720,17 +761,64 @@ async function showLiveSearch(searchInterface = null) {
           }
           
           // Show filtered conversations in the current window
-          filteredConversations.slice(windowStart, windowStart + windowSize).forEach((conv, index) => {
+          for (let index = 0; index < Math.min(windowSize, filteredConversations.length - windowStart); index++) {
+            const conv = filteredConversations[windowStart + index];
             const actualIndex = windowStart + index;
             const isSelected = actualIndex === state.selectedIndex;
             const modified = conv.modified || new Date();
             const relativeTime = getRelativeTime(modified);
             const project = (conv.project || '').slice(0, 50);
-            
+
             const cursor = isSelected ? colors.accent('▶ ') : '  ';
             const resultLine = `${cursor}${colors.dim(relativeTime)} ${colors.accent('│')} ${colors.primary(project)}`;
             console.log(resultLine);
-          });
+
+            // Show preview for selected conversation
+            if (isSelected) {
+              // Use preview from index if available, otherwise read file
+              let preview = conv.preview || '';
+
+              // If no preview in index, try to read from file
+              if (!preview && (conv.exportedFile || conv.originalPath || conv.path)) {
+                const filePath = conv.exportedFile || conv.originalPath || conv.path;
+                try {
+                  const content = await readFile(filePath, 'utf-8');
+                  const lines = content.split('\n');
+
+                  // Extract first meaningful content (skip metadata)
+                  for (const line of lines) {
+                    if (line.startsWith('## 👤') || line.startsWith('## 🤖')) {
+                      // Start capturing content
+                      const contentStart = lines.indexOf(line) + 1;
+                      const contentLines = lines.slice(contentStart, contentStart + 10).join(' ');
+                      preview = contentLines.replace(/\s+/g, ' ').slice(0, 135).trim();
+                      break;
+                    }
+                  }
+                } catch {
+                  // Skip preview if file can't be read
+                }
+              }
+
+              if (preview) {
+                console.log(colors.subdued('    ┌─ Preview'));
+                const words = preview.split(' ');
+                let currentLine = '';
+                for (const word of words) {
+                  if ((currentLine + word).length > 135) {
+                    console.log(colors.subdued('    │ ') + currentLine.trim());
+                    currentLine = word + ' ';
+                  } else {
+                    currentLine += word + ' ';
+                  }
+                }
+                if (currentLine.trim()) {
+                  console.log(colors.subdued('    │ ') + currentLine.trim());
+                }
+                console.log(colors.subdued('    └─'));
+              }
+            }
+          }
           
           if (filteredConversations.length > windowSize) {
             // Show position indicator
@@ -1349,6 +1437,11 @@ async function showLiveSearch(searchInterface = null) {
     };
     
     const cleanup = () => {
+      // Exit alternate screen buffer to restore normal terminal
+      if (process.stdout.isTTY) {
+        process.stdout.write('\u001b[?1049l');
+      }
+
       process.stdin.removeListener('keypress', handleKeypress);
       process.stdout.removeListener('resize', handleResize);
       if (process.stdin.isTTY) {
@@ -1607,12 +1700,26 @@ async function createClaudeContext(conversation) {
 
 async function showConversationActions(conversation) {
   console.clear();
-  
+
+  // Get actual file size if not in conversation object
+  let fileSize = conversation.size || 0;
+  if (fileSize === 0) {
+    const filePath = conversation.path || conversation.exportedFile || conversation.originalPath;
+    if (filePath) {
+      try {
+        const fileStat = await stat(filePath);
+        fileSize = fileStat.size;
+      } catch {
+        // Keep 0 if we can't read the file
+      }
+    }
+  }
+
   console.log(colors.primary('\n📄 Conversation Details\n'));
   console.log(colors.dim(`Project: ${conversation.project}`));
   console.log(colors.dim(`File: ${conversation.name}`));
   console.log(colors.dim(`Modified: ${conversation.modified.toLocaleString()}`));
-  console.log(colors.dim(`Size: ${(conversation.size / 1024).toFixed(1)} KB\n`));
+  console.log(colors.dim(`Size: ${(fileSize / 1024).toFixed(1)} KB\n`));
   
   const { action } = await inquirer.prompt([
     {
@@ -1751,40 +1858,77 @@ async function main() {
       await showAnalytics(status);
       // Re-run main to return to menu
       return main();
-        
+
+    case 'skip_setup':
+      // User chose to start searching - load the existing index
+      {
+        console.log('\n');
+        const loadingSpinner = ora({
+          text: 'Reading 261 MB search index...',
+          spinner: 'dots'
+        }).start();
+
+        // Show elapsed time during load
+        const startTime = Date.now();
+        const timerInterval = setInterval(() => {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          loadingSpinner.text = `Reading 261 MB search index... ${elapsed}s`;
+        }, 100);
+
+        const miniSearchForSkip = new MiniSearchEngine();
+        const skipLoaded = await miniSearchForSkip.loadIndex();
+
+        clearInterval(timerInterval);
+
+        if (skipLoaded) {
+          searchInterface = miniSearchForSkip;
+          const count = miniSearchForSkip.getStats().totalConversations;
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          loadingSpinner.succeed(`Loaded ${count} conversations in ${elapsed}s! 🚀`);
+        } else {
+          loadingSpinner.fail('Failed to load index');
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+      break;
+
     case 'exit':
       console.log(colors.dim('\nGoodbye! 👋'));
       process.exit(0);
     }
   }
-  
-  // Always try to use MiniSearch - build index if needed
-  const miniSearch = new MiniSearchEngine();
-  
-  // Try to load existing index
-  let indexLoaded = false;
+
+  // Only check/build index if searchInterface wasn't already set by setup menu
+  let indexLoaded = !!searchInterface; // If searchInterface is set, index is already loaded
   let needsRebuild = false;
-  
-  try {
-    indexLoaded = await miniSearch.loadIndex();
-    if (indexLoaded) {
-      // Check if index is stale
-      needsRebuild = await miniSearch.needsRebuild();
-      
-      if (needsRebuild) {
-        console.log(colors.warning('\n⚠️  Search index is outdated due to new conversations\n'));
-        indexLoaded = false; // Force rebuild
-      } else {
-        searchInterface = miniSearch;
-        console.log(colors.success('⚡ Using indexed search (fast mode)\n'));
+
+  if (!searchInterface) {
+    // Always try to use MiniSearch - build index if needed
+    const miniSearch = new MiniSearchEngine();
+
+    try {
+      indexLoaded = await miniSearch.loadIndex();
+      if (indexLoaded) {
+        // Check if index is stale
+        needsRebuild = await miniSearch.needsRebuild();
+
+        if (needsRebuild) {
+          console.log(colors.warning('\n⚠️  Search index is outdated due to new conversations\n'));
+          indexLoaded = false; // Force rebuild
+        } else {
+          searchInterface = miniSearch;
+          console.log(colors.success('⚡ Using indexed search (fast mode)\n'));
+        }
       }
+    } catch (error) {
+      console.error(colors.error('Failed to load search index:', error.message));
     }
-  } catch (error) {
-    console.error(colors.error('Failed to load search index:', error.message));
   }
-  
+
   // If no index exists or it needs rebuilding, build it automatically
   if (!indexLoaded) {
+    const miniSearch = searchInterface || new MiniSearchEngine();
     const message = needsRebuild 
       ? '\n🔄 Rebuilding search index with latest conversations...'
       : '\n📦 First-time setup: Building search index for optimal performance...';
@@ -1796,12 +1940,13 @@ async function main() {
     
     try {
       // Build the index
-      await miniSearch.buildIndex();
+      const buildStats = await miniSearch.buildIndex();
       await miniSearch.saveIndex();
-      
-      // Mark index as complete in setup manager
-      await setupManager.markIndexComplete(status.conversations.length);
-      
+
+      // Mark index as complete in setup manager with ACTUAL indexed count
+      const actualIndexed = buildStats.totalDocuments || buildStats.totalConversations || status.conversations.length;
+      await setupManager.markIndexComplete(actualIndexed);
+
       spinner.succeed('Search index built successfully!');
       searchInterface = miniSearch;
       console.log(colors.success('\n⚡ Search is now optimized (20ms response time)\n'));
@@ -1811,9 +1956,7 @@ async function main() {
       console.log(colors.warning('\n⚠️  Falling back to basic search (slower)\n'));
     }
   }
-  
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
+
   // Launch search interface
   const selectedConversation = await showLiveSearch(searchInterface);
   if (selectedConversation) {

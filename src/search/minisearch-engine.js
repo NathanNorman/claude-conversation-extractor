@@ -4,6 +4,7 @@ import { readFile, writeFile, readdir, stat } from 'fs/promises';
 import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
+import { setImmediate } from 'timers';
 
 export class MiniSearchEngine {
   constructor(options = {}) {
@@ -31,6 +32,25 @@ export class MiniSearchEngine {
       error: (msg) => console.error(msg),
       debug: (msg) => process.env.DEBUG && console.log('[DEBUG]', msg)
     };
+  }
+
+  /**
+   * Check if a file is a documentation file (not a conversation)
+   * @param {string} filename - Name of the file
+   * @returns {boolean} True if it's a documentation file
+   */
+  isDocumentationFile(filename) {
+    const docFiles = [
+      'README.md',
+      'CHANGELOG.md',
+      'LICENSE.md',
+      'CONTRIBUTING.md',
+      'CLAUDE.md',
+      'TODO.md',
+      'NOTES.md',
+      'TESTING.md'
+    ];
+    return docFiles.some(doc => filename.toUpperCase() === doc.toUpperCase());
   }
 
   /**
@@ -163,13 +183,19 @@ export class MiniSearchEngine {
     this.initializeMiniSearch();
     this.conversationData.clear();
     this.index = this.miniSearch; // Expose for tests
-    
+
     const documents = [];
     let conversationIndex = 0;
-    
-    // If processedConversations are provided, use them directly
-    if (processedConversations && Array.isArray(processedConversations)) {
+
+    // If processedConversations are provided, use them directly (from IndexBuilder)
+    // Note: We check if it's an array, even if empty, to avoid falling through to markdown scanning
+    if (processedConversations !== null && processedConversations !== undefined && Array.isArray(processedConversations)) {
       for (const conv of processedConversations) {
+        // Skip empty conversations
+        if (!conv.fullText || conv.fullText.trim().length === 0) {
+          continue;
+        }
+
         const document = {
           id: conv.id || `conv_${conversationIndex++}`,
           content: conv.fullText || conv.preview || '',
@@ -222,7 +248,7 @@ export class MiniSearchEngine {
             if (entryStat.isDirectory()) {
               // Recursively scan subdirectories
               await scanDirectory(fullPath, entry);
-            } else if (entry.endsWith('.md') && entry.startsWith('claude-conversation-')) {
+            } else if (entry.endsWith('.md') && !this.isDocumentationFile(entry)) {
               markdownFiles.push({
                 path: fullPath,
                 project: prefix || basename(dirname(fullPath)),
@@ -415,7 +441,7 @@ export class MiniSearchEngine {
     for (const result of results.slice(0, limit)) {
       const conversation = this.conversationData.get(result.id);
       if (!conversation) continue;
-      
+
       const fullText = conversation._fullText || conversation.fullText || '';
       const content = conversation._content || conversation.content || fullText;
       
@@ -808,11 +834,11 @@ export class MiniSearchEngine {
       indexedAt: this.stats.indexedAt
     };
     
-    // Convert Map to array, preserving fullText for search highlighting
+    // Convert Map to array, keeping fullText for instant search highlighting
     const conversationEntries = Array.from(this.conversationData.entries()).map(([id, conv]) => {
       const filteredConv = {};
       for (const [key, value] of Object.entries(conv)) {
-        // Keep all fields including fullText for search functionality
+        // Keep all fields including fullText for instant highlighting
         // Only filter out truly private fields that start with double underscore
         if (!key.startsWith('__')) {
           filteredConv[key] = value;
@@ -850,7 +876,14 @@ export class MiniSearchEngine {
   async loadIndex() {
     try {
       const content = await readFile(this.indexPath, 'utf-8');
+
+      // Yield to event loop before heavy parsing to keep spinners animated
+      await new Promise(resolve => setImmediate(resolve));
+
       const indexData = JSON.parse(content);
+
+      // Yield again after parsing
+      await new Promise(resolve => setImmediate(resolve));
       
       // Initialize MiniSearch and restore from saved data
       this.initializeMiniSearch();
@@ -997,15 +1030,42 @@ export class MiniSearchEngine {
       if (!existsSync(this.indexPath)) {
         return true;
       }
-      
+
+      // If we have an archive index (significantly more conversations than active JSONL files),
+      // NEVER rebuild automatically - user explicitly built this archive
+      if (this.stats.totalConversations > 0) {
+        // Count active JSONL files
+        let jsonlCount = 0;
+        if (existsSync(this.projectsDir)) {
+          const projects = await readdir(this.projectsDir);
+          for (const project of projects) {
+            const projectPath = join(this.projectsDir, project);
+            try {
+              const projectStat = await stat(projectPath);
+              if (projectStat.isDirectory()) {
+                const files = await readdir(projectPath);
+                jsonlCount += files.filter(f => f.endsWith('.jsonl')).length;
+              }
+            } catch {
+              // Skip inaccessible directories
+            }
+          }
+        }
+
+        // If index has 2x more conversations than active JSONL files, it's an archive - don't rebuild
+        if (this.stats.totalConversations > jsonlCount * 2) {
+          return false; // Archive index - keep it!
+        }
+      }
+
       // Get file stats
       const fileStat = await stat(this.indexPath);
       const indexModTime = fileStat.mtime.getTime();
-      
+
       // Check if any JSONL file is newer than the index
       if (existsSync(this.projectsDir)) {
         const projects = await readdir(this.projectsDir);
-        
+
         // Check each project subdirectory
         for (const project of projects) {
           const projectPath = join(this.projectsDir, project);

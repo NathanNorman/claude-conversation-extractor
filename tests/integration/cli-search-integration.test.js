@@ -12,6 +12,7 @@ import { homedir } from 'os';
 describe('CLI Search Integration', () => {
   const testProjectDir = join(homedir(), '.claude', 'projects', 'test-search-integration');
   const testExportDir = join(homedir(), '.claude', 'test-exports-cli-search');
+  const testIndexPath = join(testExportDir, 'test-search-index.json');
   const testConversation1 = {
     id: 'test-conv-1',
     messages: [
@@ -53,9 +54,10 @@ describe('CLI Search Integration', () => {
     // Create test conversations directory structure with subdirectories
     const testProject1 = join(testProjectDir, 'test-project-1');
     const testProject2 = join(testProjectDir, 'test-project-2');
-    
+
     await mkdir(testProject1, { recursive: true });
     await mkdir(testProject2, { recursive: true });
+    await mkdir(testExportDir, { recursive: true });
     
     // Create multiple test files with proper conversation format in subdirectories
     await writeFile(
@@ -71,11 +73,12 @@ describe('CLI Search Integration', () => {
 
   afterAll(async () => {
     await rm(testProjectDir, { recursive: true, force: true });
+    await rm(testExportDir, { recursive: true, force: true });
   });
 
   describe('Search Result Format', () => {
     it('should return object with results array for CLI compatibility', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const result = await engine.search('JavaScript');
       
       // CLI expects this exact format
@@ -88,7 +91,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle empty search query correctly', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const result = await engine.search('');
       
       expect(result).toEqual({
@@ -99,7 +102,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle null/undefined search query', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const resultNull = await engine.search(null);
       const resultUndefined = await engine.search(undefined);
       
@@ -117,7 +120,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle search with no matches', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const result = await engine.search('NonexistentTermXYZ123');
       
       expect(result).toEqual({
@@ -130,7 +133,7 @@ describe('CLI Search Integration', () => {
 
   describe('Basic Search Functionality', () => {
     it('should find conversations with exact terms', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
 
       // Convert test conversations to processedConversations format
       const processedConversations = [
@@ -155,7 +158,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should find conversations with partial terms', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
 
       // Convert test conversations to processedConversations format
       const processedConversations = [
@@ -173,7 +176,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle common words like "the"', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const result = await engine.search('the');
       
       // Should return results (not error out)
@@ -182,7 +185,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle single character searches', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const result = await engine.search('a');
       
       // Should return empty or some results, but not error
@@ -191,7 +194,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle special characters in search', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const specialChars = ['@', '#', '$', '%', '&', '*'];
       
       for (const char of specialChars) {
@@ -204,7 +207,7 @@ describe('CLI Search Integration', () => {
 
   describe('Search Result Content', () => {
     it('should include required fields for CLI display', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
 
       // Convert test conversations to processedConversations format
       const processedConversations = [
@@ -229,7 +232,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should properly escape/handle HTML-like content', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       
       // Create a test file with HTML-like content in a subdirectory
       const htmlTestDir = join(testProjectDir, 'html-test-project');
@@ -253,7 +256,7 @@ describe('CLI Search Integration', () => {
 
   describe('Performance Requirements', () => {
     it('should complete search within reasonable time', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const startTime = Date.now();
       const result = await engine.search('test');
       const duration = Date.now() - startTime;
@@ -265,7 +268,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle multiple concurrent searches', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       
       // Fire off multiple searches at once
       const searches = [
@@ -289,7 +292,7 @@ describe('CLI Search Integration', () => {
 
   describe('Edge Cases', () => {
     it('should handle very long search queries', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       const longQuery = 'JavaScript '.repeat(100);
       
       const result = await engine.search(longQuery);
@@ -297,7 +300,7 @@ describe('CLI Search Integration', () => {
     });
 
     it('should handle unicode and emoji', async () => {
-      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir });
+      const engine = new MiniSearchEngine({ projectsDir: testProjectDir, exportDir: testExportDir, indexPath: testIndexPath });
       
       const unicodeQueries = [
         '你好',
