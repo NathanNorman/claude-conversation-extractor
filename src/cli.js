@@ -333,6 +333,7 @@ class LiveSearchState {
       repos: new Set(),
       dateRange: null
     };
+    this.browsePreviewPage = 0; // Track which page of preview we're viewing in browse mode
   }
   
   reset() {
@@ -718,7 +719,10 @@ async function showLiveSearch(searchInterface = null) {
               modified: conv.modified ? new Date(conv.modified) : new Date(),
               name: conv.project,
               path: conv.originalPath || conv.exportedFile,
-              preview: '',
+              exportedFile: conv.exportedFile,
+              originalPath: conv.originalPath,
+              preview: conv.preview || (conv.fullText ? conv.fullText.slice(0, 200) : ''),
+              fullText: conv.fullText,
               relevance: 1.0
             }))
             .sort((a, b) => b.modified.getTime() - a.modified.getTime());
@@ -775,46 +779,48 @@ async function showLiveSearch(searchInterface = null) {
 
             // Show preview for selected conversation
             if (isSelected) {
-              // Use preview from index if available, otherwise read file
-              let preview = conv.preview || '';
+              // Use fullText or preview from the conversation object (already populated)
+              let fullText = conv.fullText || conv.preview || '';
 
-              // If no preview in index, try to read from file
-              if (!preview && (conv.exportedFile || conv.originalPath || conv.path)) {
-                const filePath = conv.exportedFile || conv.originalPath || conv.path;
-                try {
-                  const content = await readFile(filePath, 'utf-8');
-                  const lines = content.split('\n');
+              if (fullText) {
+                // Calculate preview based on current page (500 chars per page)
+                const charsPerPage = 500;
+                const maxPages = Math.ceil(fullText.length / charsPerPage);
+                const currentPage = Math.min(state.browsePreviewPage, maxPages - 1);
+                const startChar = currentPage * charsPerPage;
+                const endChar = Math.min(startChar + charsPerPage, fullText.length);
 
-                  // Extract first meaningful content (skip metadata)
-                  for (const line of lines) {
-                    if (line.startsWith('## 👤') || line.startsWith('## 🤖')) {
-                      // Start capturing content
-                      const contentStart = lines.indexOf(line) + 1;
-                      const contentLines = lines.slice(contentStart, contentStart + 10).join(' ');
-                      preview = contentLines.replace(/\s+/g, ' ').slice(0, 135).trim();
-                      break;
-                    }
-                  }
-                } catch {
-                  // Skip preview if file can't be read
-                }
-              }
+                const previewText = fullText.slice(startChar, endChar).replace(/\s+/g, ' ').trim();
 
-              if (preview) {
-                console.log(colors.subdued('    ┌─ Preview'));
-                const words = preview.split(' ');
+                const pageIndicator = maxPages > 1
+                  ? colors.dim(` (Page ${currentPage + 1}/${maxPages}) [←→ to scroll]`)
+                  : '';
+                console.log(colors.subdued('    ┌─ Preview' + pageIndicator));
+
+                // Word-wrap to 135 chars per line, show up to 3 lines
+                const words = previewText.split(' ');
                 let currentLine = '';
+                let lineCount = 0;
+                const maxLines = 3;
+
                 for (const word of words) {
                   if ((currentLine + word).length > 135) {
-                    console.log(colors.subdued('    │ ') + currentLine.trim());
-                    currentLine = word + ' ';
+                    if (lineCount < maxLines) {
+                      console.log(colors.subdued('    │ ') + currentLine.trim());
+                      lineCount++;
+                      currentLine = word + ' ';
+                    } else {
+                      break; // Stop after maxLines
+                    }
                   } else {
                     currentLine += word + ' ';
                   }
                 }
-                if (currentLine.trim()) {
+
+                if (currentLine.trim() && lineCount < maxLines) {
                   console.log(colors.subdued('    │ ') + currentLine.trim());
                 }
+
                 console.log(colors.subdued('    └─'));
               }
             }
@@ -1264,41 +1270,57 @@ async function showLiveSearch(searchInterface = null) {
         }
       } else if (key && key.name === 'up') {
         state.navigateUp();
+        state.browsePreviewPage = 0; // Reset preview page when switching conversations
         await displayScreen();
       } else if (key && key.name === 'down') {
         state.navigateDown();
+        state.browsePreviewPage = 0; // Reset preview page when switching conversations
         await displayScreen();
       } else if (key && key.name === 'pageup') {
         state.pageUp();
+        state.browsePreviewPage = 0; // Reset preview page when switching conversations
         await displayScreen();
       } else if (key && key.name === 'pagedown') {
         state.pageDown();
+        state.browsePreviewPage = 0; // Reset preview page when switching conversations
         await displayScreen();
       } else if (key && key.name === 'right') {
-        // Navigate to next occurrence in selected conversation
-        if (state.results.length > 0 && state.selectedIndex < state.results.length) {
+        // In browse mode (no search term), scroll through conversation preview
+        // In search mode, navigate to next search occurrence
+        if (state.searchTerm.length === 0) {
+          // Browse mode - page forward through conversation
+          state.browsePreviewPage++;
+          await displayScreen();
+        } else if (state.results.length > 0 && state.selectedIndex < state.results.length) {
+          // Search mode - navigate to next occurrence
           const result = state.results[state.selectedIndex];
           if (result.occurrences && result.occurrences.length > 1) {
             // Move to next occurrence
             result.currentOccurrenceIndex = (result.currentOccurrenceIndex + 1) % result.occurrences.length;
-            
+
             // Update the preview to show the current occurrence
             result.preview = result.occurrences[result.currentOccurrenceIndex].preview;
-            
+
             await displayScreen();
           }
         }
       } else if (key && key.name === 'left') {
-        // Navigate to previous occurrence in selected conversation
-        if (state.results.length > 0 && state.selectedIndex < state.results.length) {
+        // In browse mode (no search term), scroll through conversation preview
+        // In search mode, navigate to previous search occurrence
+        if (state.searchTerm.length === 0) {
+          // Browse mode - page backward through conversation
+          state.browsePreviewPage = Math.max(0, state.browsePreviewPage - 1);
+          await displayScreen();
+        } else if (state.results.length > 0 && state.selectedIndex < state.results.length) {
+          // Search mode - navigate to previous occurrence
           const result = state.results[state.selectedIndex];
           if (result.occurrences && result.occurrences.length > 1) {
             // Move to previous occurrence
             result.currentOccurrenceIndex = (result.currentOccurrenceIndex - 1 + result.occurrences.length) % result.occurrences.length;
-            
+
             // Update the preview to show the current occurrence
             result.preview = result.occurrences[result.currentOccurrenceIndex].preview;
-            
+
             await displayScreen();
           }
         }
@@ -1784,9 +1806,142 @@ async function showConversationActions(conversation) {
   }
 }
 
+/**
+ * Non-interactive CLI mode for automation/LLM usage
+ */
+async function runAutomatedSearch(args) {
+  const searchTerm = args['--search'] || args['--search-term'];
+  const filterRepos = args['--filter-repo'] ? args['--filter-repo'].split(',') : [];
+  const filterDate = args['--filter-date'];
+  const limit = parseInt(args['--limit'] || '20', 10);
+  const outputJson = args['--json'] !== undefined;
+
+  // Load search engine
+  const engine = new MiniSearchEngine();
+  const loaded = await engine.loadIndex();
+
+  if (!loaded) {
+    const error = { error: 'Failed to load search index', suggestions: ['Run claude-logs interactively to build index'] };
+    console.log(JSON.stringify(error, null, 2));
+    process.exit(1);
+  }
+
+  // Perform search
+  let results = [];
+  if (searchTerm) {
+    const searchResult = await engine.search(searchTerm, { limit });
+    results = searchResult.results || [];
+  } else {
+    // No search term - return all conversations
+    const allConvos = Array.from(engine.conversationData.values())
+      .slice(0, limit)
+      .map(conv => ({
+        project: conv.project,
+        exportedFile: conv.exportedFile,
+        originalPath: conv.originalPath,
+        modified: conv.modified,
+        preview: conv.preview,
+        fullText: conv.fullText
+      }));
+    results = allConvos;
+  }
+
+  // Apply filters
+  if (filterRepos.length > 0) {
+    results = results.filter(r => filterRepos.includes(r.project));
+  }
+
+  if (filterDate) {
+    const dateRange = getDateRange(filterDate);
+    if (dateRange) {
+      results = results.filter(r => {
+        const date = new Date(r.modified);
+        return isDateInRange(date, dateRange);
+      });
+    }
+  }
+
+  // Format output with file sizes
+  const output = [];
+  for (const r of results) {
+    const filePath = r.exportedFile || r.originalPath || r.path;
+    let fileSize = 0;
+
+    // Get file size
+    if (filePath) {
+      try {
+        const fileStat = await stat(filePath);
+        fileSize = fileStat.size;
+      } catch {
+        // Keep 0
+      }
+    }
+
+    output.push({
+      fileName: filePath ? filePath.split('/').pop() : 'unknown',
+      filePath: filePath,
+      fileSize: fileSize,
+      fileSizeKB: (fileSize / 1024).toFixed(1),
+      project: r.project,
+      modified: r.modified,
+      preview: r.preview || (r.fullText ? r.fullText.slice(0, 200) : ''),
+      relevance: r.relevance,
+      matches: r.totalOccurrences,
+      highlightedPreview: r.preview // Already has [HIGHLIGHT] markers
+    });
+  }
+
+  // Output results
+  if (outputJson) {
+    console.log(JSON.stringify({
+      query: searchTerm || null,
+      totalResults: output.length,
+      filters: {
+        repos: filterRepos,
+        dateRange: filterDate
+      },
+      results: output
+    }, null, 2));
+  } else {
+    // Human-readable output
+    console.log(`Found ${output.length} results${searchTerm ? ` for "${searchTerm}"` : ''}:\n`);
+    output.forEach((r, i) => {
+      console.log(`${i + 1}. ${r.fileName}`);
+      console.log(`   Size: ${r.fileSizeKB} KB`);
+      console.log(`   Project: ${r.project}`);
+      console.log(`   Preview: ${r.preview.substring(0, 100)}...\n`);
+    });
+  }
+
+  process.exit(0);
+}
+
+/**
+ * Parse CLI arguments
+ */
+function parseArgs() {
+  const args = {};
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith('--')) {
+      const key = arg;
+      const value = process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : true;
+      args[key] = value;
+      if (value !== true) i++; // Skip next arg if it was a value
+    }
+  }
+  return args;
+}
+
 async function main() {
+  // Check for CLI arguments (non-interactive mode)
+  const args = parseArgs();
+  if (args['--search'] || args['--search-term'] || args['--json'] || args['--filter-repo'] || args['--filter-date']) {
+    return await runAutomatedSearch(args);
+  }
+
   console.clear();
-  
+
   logger.infoSync('Claude Conversation Extractor started');
   
   // Initialize setup manager
