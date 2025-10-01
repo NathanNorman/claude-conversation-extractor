@@ -31,12 +31,9 @@ export class CommandManager {
    */
   async isRememberCommandInstalled() {
     try {
-      // Check for markdown file in commands directory (new approach)
-      const projectCommandPath = join(process.cwd(), '.claude', 'commands', 'remember.md');
-      const globalCommandPath = join(this.commandsDir, 'remember.md');
-
-      // Command is installed if either markdown file exists
-      return existsSync(projectCommandPath) || existsSync(globalCommandPath);
+      // Check for markdown file in global commands directory
+      const commandPath = join(this.commandsDir, 'remember.md');
+      return existsSync(commandPath);
     } catch (error) {
       this.logger.error(colors.error(`Error checking command status: ${error.message}`));
       return false;
@@ -48,54 +45,96 @@ export class CommandManager {
    * @returns {string}
    */
   getRememberCommandPath() {
-    // Check project-level first, then global
-    const projectPath = join(process.cwd(), '.claude', 'commands', 'remember.md');
-    if (existsSync(projectPath)) {
-      return projectPath;
-    }
-
     return join(this.commandsDir, 'remember.md');
   }
 
   /**
-   * Install the /remember command (creates markdown file in project)
+   * Get the /remember command markdown content
+   * @returns {string}
+   */
+  getRememberCommandContent() {
+    return `---
+allowed-tools: Bash
+description: Search previous conversations using natural language
+argument-hint: [search query or date filter]
+---
+
+# Finding Previous Conversations
+
+The user asked to remember: **"$ARGUMENTS"**
+
+## Your Task
+
+Search through their previous Claude Code conversation history using \`claude-logs\` in non-interactive mode.
+
+## Available Search Commands
+
+### Search by content
+\`\`\`bash
+claude-logs --search "$ARGUMENTS" --json --limit 10
+\`\`\`
+
+### Filter by date (if query mentions time)
+- If query mentions "yesterday": \`--filter-date yesterday\`
+- If query mentions "last week": \`--filter-date lastweek\`
+- If query mentions "today": \`--filter-date today\`
+- If query mentions "last month": \`--filter-date lastmonth\`
+
+### Filter by project (if query mentions project name)
+\`\`\`bash
+claude-logs --search "keywords" --filter-repo "project-name" --json
+\`\`\`
+
+## Command to Run
+
+Based on the user's query, construct and run the appropriate \`claude-logs\` command.
+
+**Example queries:**
+- "API authentication" → \`claude-logs --search "API authentication" --json\`
+- "what did I work on yesterday" → \`claude-logs --filter-date yesterday --json\`
+- "database schema last week" → \`claude-logs --search "database schema" --filter-date lastweek --json\`
+
+## After Getting Results
+
+1. Parse the JSON output
+2. Summarize what conversations were found
+3. Show the most relevant results (project, date, preview)
+4. Ask if the user wants to see more details or open a specific conversation
+
+**Note:** The JSON output includes \`filePath\` for each result - you can read those files to show full conversation content.
+`;
+  }
+
+  /**
+   * Install the /remember command (creates markdown file)
    * @returns {Promise<{success: boolean, message: string}>}
    */
   async installRememberCommand() {
     try {
-      // Create .claude/commands directory in current project
-      const commandsDir = join(process.cwd(), '.claude', 'commands');
-      if (!existsSync(commandsDir)) {
-        await mkdir(commandsDir, { recursive: true });
+      const { writeFile: writeFileAsync } = await import('fs/promises');
+
+      // Create .claude/commands directory
+      if (!existsSync(this.commandsDir)) {
+        await mkdir(this.commandsDir, { recursive: true });
       }
 
-      const commandPath = join(commandsDir, 'remember.md');
+      const commandPath = join(this.commandsDir, 'remember.md');
 
       // Check if already exists
       if (existsSync(commandPath)) {
         return {
           success: true,
-          message: '/remember command already exists in project'
+          message: '/remember command already installed'
         };
       }
 
-      // Copy the command file from the template
-      const templatePath = join(process.cwd(), '.claude', 'commands', 'remember.md');
+      // Generate the command file
+      const content = this.getRememberCommandContent();
+      await writeFileAsync(commandPath, content, 'utf-8');
 
-      // Check if running from within the claude-conversation-extractor project
-      const sourceCommandPath = existsSync(templatePath) ? templatePath : null;
-
-      if (!sourceCommandPath) {
-        return {
-          success: false,
-          message: 'Could not find remember.md template. Run from claude-conversation-extractor directory.'
-        };
-      }
-
-      // Command file is already in place if we're in the project directory
       return {
         success: true,
-        message: '/remember command is available (markdown-based, auto-discovered by Claude Code)'
+        message: '/remember command installed successfully! Available immediately in Claude Code.'
       };
     } catch (error) {
       return {
@@ -112,7 +151,7 @@ export class CommandManager {
   async uninstallRememberCommand() {
     try {
       const { unlink } = await import('fs/promises');
-      const commandPath = join(process.cwd(), '.claude', 'commands', 'remember.md');
+      const commandPath = join(this.commandsDir, 'remember.md');
 
       if (!existsSync(commandPath)) {
         return {

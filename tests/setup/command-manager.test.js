@@ -32,19 +32,6 @@ describe('CommandManager (Markdown-Based)', () => {
   });
 
   describe('/remember Command Detection', () => {
-    test('should detect when remember.md exists in project', async () => {
-      // Create .claude/commands directory in project
-      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
-      await fs.ensureDir(projectCommandsDir);
-      await fs.writeFile(
-        path.join(projectCommandsDir, 'remember.md'),
-        '# Test command'
-      );
-
-      const installed = await commandManager.isRememberCommandInstalled();
-      expect(installed).toBe(true);
-    });
-
     test('should detect when remember.md exists in global commands', async () => {
       // Create command in global directory
       await fs.ensureDir(commandsDir);
@@ -64,33 +51,32 @@ describe('CommandManager (Markdown-Based)', () => {
   });
 
   describe('Command Installation', () => {
-    test('should report success if remember.md already exists in project', async () => {
-      // Pre-create the command file
-      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
-      await fs.ensureDir(projectCommandsDir);
-      await fs.writeFile(
-        path.join(projectCommandsDir, 'remember.md'),
-        '# Existing command'
-      );
-
+    test('should generate remember.md in global commands directory', async () => {
       const result = await commandManager.installRememberCommand();
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('already exists');
+      expect(result.message).toContain('installed successfully');
+
+      // Verify file was created in global directory
+      const commandPath = path.join(commandsDir, 'remember.md');
+      expect(fs.existsSync(commandPath)).toBe(true);
+
+      // Verify content includes frontmatter and instructions
+      const content = await fs.readFile(commandPath, 'utf-8');
+      expect(content).toContain('allowed-tools: Bash');
+      expect(content).toContain('$ARGUMENTS');
+      expect(content).toContain('claude-logs --search');
     });
 
-    test('should verify remember.md exists when running from claude-conversation-extractor', async () => {
-      // Create the command file to simulate being in the project
-      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
-      await fs.ensureDir(projectCommandsDir);
-      await fs.writeFile(
-        path.join(projectCommandsDir, 'remember.md'),
-        '---\nallowed-tools: Bash\n---\n# Remember command'
-      );
+    test('should report success if remember.md already installed', async () => {
+      // Install once
+      await commandManager.installRememberCommand();
 
+      // Try to install again
       const result = await commandManager.installRememberCommand();
 
       expect(result.success).toBe(true);
+      expect(result.message).toContain('already installed');
     });
   });
 
