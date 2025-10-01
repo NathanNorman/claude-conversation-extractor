@@ -43,25 +43,29 @@ export class MiniSearchEngine {
   getDisplayName(dirName) {
     if (!dirName) return 'Unknown';
 
-    // Remove common prefixes that are just path-based
-    const prefixes = [
-      '-Users-nathan-norman-',
-      '-Users-nathan-norman--', // double dash for temp dirs
-      'Users-nathan-norman-',
-      '/Users/nathan.norman/',
-      join(homedir(), '').replace(/\\/g, '/') + '/'
-    ];
-
+    // Remove path-based prefixes using dynamic patterns
     let displayName = dirName;
-    for (const prefix of prefixes) {
-      if (displayName.startsWith(prefix)) {
-        displayName = displayName.substring(prefix.length);
-        break;
-      }
+
+    // Pattern 1: Remove -Users-<username>- prefix (most common)
+    const userPrefixMatch = displayName.match(/^-?Users-([^-]+)-(.+)$/);
+    if (userPrefixMatch) {
+      displayName = userPrefixMatch[2]; // Extract just the project name
     }
 
-    // Handle home directory case
-    if (displayName === '-Users-nathan-norman' || displayName === 'Users-nathan-norman') {
+    // Pattern 2: Remove full home directory path
+    const homeDir = join(homedir(), '').replace(/\\/g, '/');
+    if (displayName.startsWith(homeDir)) {
+      displayName = displayName.substring(homeDir.length);
+    }
+
+    // Pattern 3: Remove absolute path prefix /Users/<username>/
+    const absPathMatch = displayName.match(/^\/Users\/[^/]+\/(.+)$/);
+    if (absPathMatch) {
+      displayName = absPathMatch[1];
+    }
+
+    // Handle home directory case (just the username)
+    if (displayName.match(/^-?Users-[^-]+$/)) {
       displayName = '~ (home)';
     }
 
