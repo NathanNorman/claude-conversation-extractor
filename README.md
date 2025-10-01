@@ -5,7 +5,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/NathanNorman/claude-conversation-extractor)](https://github.com/NathanNorman/claude-conversation-extractor/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-340%20passing-success)](tests/)
+[![Tests](https://img.shields.io/badge/tests-345%20passing-success)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-success)](tests/)
 
 An advanced Node.js tool for searching, browsing, and exporting Claude Code conversation history. Features **interactive live search**, **auto-export hooks**, and **MiniSearch-powered fuzzy matching** for instant results.
@@ -36,7 +36,7 @@ An advanced Node.js tool for searching, browsing, and exporting Claude Code conv
 - **Non-interactive CLI** - perfect for automation and scripts
 
 ### ⚡ **Performance & Reliability**
-- **100% test coverage** with 340+ passing tests
+- **100% line coverage** with 345 passing tests (22 test suites)
 - **30x faster test suite** (180s → 6s) with index protection
 - **Smart indexing** - incremental updates for new conversations, full rebuild for large changes
 - **Graceful error handling** with empty conversation detection
@@ -447,8 +447,9 @@ npm run dev               # Same as npm start
 
 ### Testing Strategy
 
-- **340 tests** organized in 21 test suites
-- **100% coverage** across core functionality
+- **345 tests** organized in 22 test suites
+- **100% line coverage** across core functionality
+- **Integration tests** for end-to-end validation (not just mocked units)
 - **Index protection** prevents tests from overwriting production index
 - **Fixture-based** testing with mock conversation data
 - **Integration tests** for complete workflows
