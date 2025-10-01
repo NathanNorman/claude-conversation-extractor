@@ -1,12 +1,20 @@
 {
   "name": "claude-conversation-extractor",
   "version": "1.1.2",
-  "description": "Extract Claude Code conversations with interactive search",
+  "description": "Search, browse, and export Claude Code conversation history with interactive live search, MiniSearch fuzzy matching, and archived conversation support",
   "main": "src/index.js",
   "type": "module",
   "bin": {
     "claude-logs": "./src/cli.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NathanNorman/claude-conversation-extractor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NathanNorman/claude-conversation-extractor/issues"
+  },
+  "homepage": "https://github.com/NathanNorman/claude-conversation-extractor#readme",
   "scripts": {
     "start": "node src/cli.js",
     "test": "./scripts/test-with-index-protection.sh",
@@ -46,11 +54,25 @@
   },
   "keywords": [
     "claude",
+    "claude-code",
     "conversation",
     "extractor",
+    "export",
+    "search",
     "interactive",
-    "search"
+    "minisearch",
+    "fuzzy-search",
+    "chat-history",
+    "backup",
+    "archive",
+    "jsonl",
+    "markdown",
+    "cli",
+    "terminal"
   ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "author": "Nathan Norman",
   "license": "MIT"
 }
