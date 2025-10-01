@@ -68,11 +68,12 @@ class BulkExtractor {
         
         if (alreadyExtracted) {
           // Check if the extracted file is up to date
-          const timestamp = conversation.modified 
+          const timestamp = conversation.modified
             ? new Date(conversation.modified).toISOString().split('T')[0]
             : new Date().toISOString().split('T')[0];
           const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
-          const fileName = `${projectName}_${timestamp}.md`;
+          const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
+          const fileName = `${projectName}_${sessionId}_${timestamp}.md`;
           const filePath = join(exportDir, fileName);
           
           const fileStat = await stat(filePath);
@@ -83,7 +84,7 @@ class BulkExtractor {
             spinner.text = `⏭️  Skipping ${conversation.project} (already extracted)`;
           } else {
             // File is outdated, re-extract
-            const result = await this.exportSingleConversation(conversation, exportDir);
+            const result = await this.exportSingleConversation(conversation, exportDir, spinner);
             if (result.exported) {
               this.extracted++;
             }
@@ -92,7 +93,7 @@ class BulkExtractor {
           }
         } else {
           // Not extracted yet, do it now
-          const result = await this.exportSingleConversation(conversation, exportDir);
+          const result = await this.exportSingleConversation(conversation, exportDir, spinner);
           if (result.exported) {
             this.extracted++;
           }
@@ -216,7 +217,7 @@ class BulkExtractor {
     };
   }
 
-  async exportSingleConversation(conversation, exportDir) {
+  async exportSingleConversation(conversation, exportDir, spinner = null) {
     // Read the JSONL file with error recovery
     let content;
     try {
@@ -314,24 +315,25 @@ class BulkExtractor {
         const isTestEnv = process.env.NODE_ENV?.includes('test') || process.env.JEST_WORKER_ID || process.env.CI;
         
         if (!isTestEnv) {
-          // Stop spinner temporarily for prompt
-          const spinner = ora();
-          spinner.stop();
-          
+          // Stop the main spinner if we have one
+          if (spinner) {
+            spinner.stop();
+          }
+
           console.log(colors.warning(`\n⚠️  Empty conversation found: ${conversation.project}`));
           console.log(colors.muted(`   Path: ${conversation.path}`));
           console.log(colors.muted(`   Reason: ${emptyError}\n`));
-          
+
           const { action } = await inquirer.prompt([{
-            type: 'expand',
+            type: 'list',
             name: 'action',
             message: 'What would you like to do?',
             choices: [
-              { key: 'y', name: 'Yes - Delete this empty conversation', value: 'delete' },
-              { key: 'n', name: 'No - Keep this empty conversation', value: 'keep' },
-              { key: 'a', name: 'All - Delete this and all future empty conversations', value: 'deleteAll' }
+              { name: 'Keep - Leave this empty conversation', value: 'keep' },
+              { name: 'Delete - Remove this empty conversation', value: 'delete' },
+              { name: 'Delete All - Remove this and all future empty conversations', value: 'deleteAll' }
             ],
-            default: 'n'
+            default: 'keep'
           }]);
           
           if (action === 'deleteAll') {
@@ -368,15 +370,16 @@ class BulkExtractor {
     }
     
     // Generate filename based on format
-    const timestamp = conversation.modified 
+    const timestamp = conversation.modified
       ? new Date(conversation.modified).toISOString().split('T')[0]
       : new Date().toISOString().split('T')[0];
     const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
-    
+    const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
+
     // Get file extension based on format
     const format = this.currentFormat || 'markdown';
     const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
-    const fileName = `${projectName}_${timestamp}${extension}`;
+    const fileName = `${projectName}_${sessionId}_${timestamp}${extension}`;
     const filePath = join(exportDir, fileName);
     
     // Check if file already exists (skip if duplicate)
@@ -467,17 +470,18 @@ class BulkExtractor {
   }
 
   async checkIfAlreadyExtracted(conversation, exportDir) {
-    const timestamp = conversation.modified 
+    const timestamp = conversation.modified
       ? new Date(conversation.modified).toISOString().split('T')[0]
       : new Date().toISOString().split('T')[0];
     const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
-    
+    const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
+
     // Check for the specific format we're currently extracting
     const format = this.currentFormat || 'markdown';
     const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
-    const fileName = `${projectName}_${timestamp}${extension}`;
+    const fileName = `${projectName}_${sessionId}_${timestamp}${extension}`;
     const filePath = join(exportDir, fileName);
-    
+
     try {
       await access(filePath);
       return true;
@@ -515,26 +519,80 @@ class BulkExtractor {
   async extractAll(options = {}) {
     // Get conversations from projectsDir
     let conversations = [];
-    
+
     if (this.projectsDir) {
-      // Read JSONL files directly from projectsDir
+      // Read JSONL files from project subdirectories (like real Claude Code structure)
       const { readdir, stat: statFile, readFile: readFileContent } = await import('fs/promises');
-      
+
       try {
-        const files = await readdir(this.projectsDir);
-        
-        for (const file of files) {
-          if (file.endsWith('.jsonl')) {
-            const filePath = join(this.projectsDir, file);
-            
+        const items = await readdir(this.projectsDir);
+
+        for (const item of items) {
+          const itemPath = join(this.projectsDir, item);
+          const itemStat = await statFile(itemPath);
+
+          if (itemStat.isDirectory()) {
+            // This is a project directory - scan for JSONL files inside it
+            try {
+              const files = await readdir(itemPath);
+
+              for (const file of files) {
+                if (file.endsWith('.jsonl')) {
+                  const filePath = join(itemPath, file);
+
+                  try {
+                    const fileStat = await statFile(filePath);
+
+                    // Read the file to count messages
+                    const content = await readFileContent(filePath, 'utf-8');
+                    const lines = content.trim().split('\n').filter(line => line.trim());
+                    let messageCount = 0;
+
+                    for (const line of lines) {
+                      try {
+                        const data = JSON.parse(line);
+                        if ((data.type === 'user' || data.type === 'assistant') && data.message && !data.isMeta) {
+                          messageCount++;
+                        }
+                      } catch {
+                        // Skip invalid lines
+                      }
+                    }
+
+                    // Only add conversations that have at least some content
+                    if (lines.length > 0) {
+                      conversations.push({
+                        project: item, // Use directory name as project
+                        file,
+                        path: filePath,
+                        modified: fileStat.mtime,
+                        size: fileStat.size,
+                        messageCount
+                      });
+                    }
+                  } catch (fileError) {
+                    // Log file access errors but continue processing other files
+                    if (this.logger?.debug) {
+                      this.logger.debug(`Error reading file ${file}: ${fileError.message}`);
+                    }
+                  }
+                }
+              }
+            } catch (projectDirError) {
+              // Skip directories we can't read
+              if (this.logger?.debug) {
+                this.logger.debug(`Error reading project directory ${item}: ${projectDirError.message}`);
+              }
+            }
+          } else if (item.endsWith('.jsonl')) {
+            // Also support flat structure for backward compatibility with old tests
+            const filePath = itemPath;
             try {
               const fileStat = await statFile(filePath);
-              
-              // Read the file to count messages
               const content = await readFileContent(filePath, 'utf-8');
               const lines = content.trim().split('\n').filter(line => line.trim());
               let messageCount = 0;
-              
+
               for (const line of lines) {
                 try {
                   const data = JSON.parse(line);
@@ -545,12 +603,11 @@ class BulkExtractor {
                   // Skip invalid lines
                 }
               }
-              
-              // Only add conversations that have at least some content
+
               if (lines.length > 0) {
                 conversations.push({
-                  project: file.replace('.jsonl', ''),
-                  file,
+                  project: item.replace('.jsonl', ''),
+                  file: item,
                   path: filePath,
                   modified: fileStat.mtime,
                   size: fileStat.size,
@@ -558,9 +615,8 @@ class BulkExtractor {
                 });
               }
             } catch (fileError) {
-              // Log file access errors but continue processing other files
               if (this.logger?.debug) {
-                this.logger.debug(`Error reading file ${file}: ${fileError.message}`);
+                this.logger.debug(`Error reading file ${item}: ${fileError.message}`);
               }
             }
           }

@@ -75,7 +75,7 @@ This is a response.`;
       expect(stats.totalDocuments).toBe(1);
     });
 
-    test('should scan subdirectories recursively', async () => {
+    test('should skip subdirectories (only scan root level)', async () => {
       // Create subdirectory structure
       const subdir1 = join(exportDir, 'toast-archiving');
       const subdir2 = join(exportDir, 'ynab-mcp');
@@ -83,15 +83,18 @@ This is a response.`;
       await mkdir(subdir1, { recursive: true });
       await mkdir(subdir2, { recursive: true });
 
-      const content = `# Claude Conversation\n\nProject: test\n\n## 👤 User\n\nTest`;
+      const content = `# Claude Conversation\n\nProject: test\nSession ID: 12345678-1234-1234-1234-123456789012\n\n## 👤 User\n\nTest`;
 
+      // Files in subdirectories should be ignored
       await writeFile(join(subdir1, 'conv1.md'), content);
       await writeFile(join(subdir2, 'conv2.md'), content);
+      // Only root level file should be indexed
       await writeFile(join(exportDir, 'root-conv.md'), content);
 
       const stats = await engine.buildIndex();
 
-      expect(stats.totalDocuments).toBe(3);
+      // Should only index root level file, not subdirectories
+      expect(stats.totalDocuments).toBe(1);
     });
   });
 

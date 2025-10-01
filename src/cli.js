@@ -2,7 +2,7 @@
 
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { readdir, stat, readFile, appendFile, writeFile, readFile as readFileSync } from 'fs/promises';
+import { readdir, stat, readFile, appendFile, writeFile, readFile as readFileSync, chmod } from 'fs/promises';
 import { join, resolve, isAbsolute } from 'path';
 import { homedir } from 'os';
 import readline from 'readline';
@@ -15,6 +15,8 @@ import { SetupManager } from './setup/setup-manager.js';
 import { showSetupMenu, showAnalytics, confirmExportLocation } from './setup/setup-menu.js';
 import { BulkExtractor } from './setup/bulk-extractor.js';
 import { IndexBuilder } from './setup/index-builder.js';
+import { HookManager } from './setup/hook-manager.js';
+import { CommandManager } from './setup/command-manager.js';
 // Removed IndexedSearch - using only MiniSearch now
 import { MiniSearchEngine } from './search/minisearch-engine.js';
 import ora from 'ora';
@@ -451,7 +453,7 @@ async function showLiveSearch(searchInterface = null) {
     }
   }
   
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const state = new LiveSearchState();
     let showFilterMenu = false;
     let searchStartTime = 0;
@@ -491,13 +493,11 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.accent(`│${' '.repeat(Math.floor((headerWidth - 32) / 2))}🔍 Interactive Conversation Search${' '.repeat(Math.ceil((headerWidth - 32) / 2))}│`));
       console.log(colors.accent(`└${'─'.repeat(headerWidth)}┘`));
       
-      // Show archive count if using indexed search, otherwise show JSONL count
+      // Show conversation count
       const conversationCount = searchInterface ?
         (searchInterface.getStats?.()?.totalConversations || conversations.length) :
         conversations.length;
-      const archiveNote = searchInterface && conversationCount > conversations.length * 2 ?
-        colors.dim(' (includes historical archive)') : '';
-      console.log(colors.success(`✅ Found ${conversationCount} conversations${archiveNote}\n`));
+      console.log(colors.success(`✅ Found ${conversationCount} conversations\n`));
       
       // Display active filters with prominent indicator
       const hasActiveFilters = state.activeFilters.repos.size > 0 || state.activeFilters.dateRange;
@@ -1486,14 +1486,14 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.dim('\nGoodbye! 👋'));
       process.exit(0);
     });
-    
+
     process.on('SIGTERM', () => {
       cleanup();
       process.exit(0);
     });
-    
-    // Initial display
-    displayScreen();
+
+    // Initial display - await to ensure it completes before keypresses
+    await displayScreen();
   });
 }
 
@@ -1591,8 +1591,115 @@ async function createClaudeContext(conversation) {
   const spinner = ora('Creating Claude Code context...').start();
 
   try {
-    // Read and parse the conversation
-    const content = await readFile(conversation.path, 'utf-8');
+    // Conversation.path might be the markdown export, we need the JSONL source
+    // Try to find the JSONL file by looking in projects directory
+    let jsonlPath = conversation.originalPath || conversation.path;
+    let foundProjectDirName = null; // Track the .claude/projects directory name
+
+    // If path points to markdown export, we need to find the JSONL source
+    if (jsonlPath.endsWith('.md') || jsonlPath.includes('claude_conversations')) {
+      // Extract session ID from path or conversation object
+      let sessionId = null;
+
+      // Try to extract from conversation object
+      if (conversation.file) {
+        sessionId = conversation.file.replace('.jsonl', '');
+      } else if (conversation.sessionId) {
+        sessionId = conversation.sessionId;
+      } else {
+        // Try to extract from filename
+        const filenameMatch = jsonlPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        if (filenameMatch) {
+          sessionId = filenameMatch[1];
+        }
+      }
+
+      if (sessionId) {
+        // Find the JSONL file in projects directory
+        // AND/OR find which project directory this conversation belongs to
+        const projectsDir = join(homedir(), '.claude', 'projects');
+        try {
+          const projects = await readdir(projectsDir);
+
+          for (const project of projects) {
+            const projectPath = join(projectsDir, project);
+            try {
+              const projectStat = await stat(projectPath);
+              if (projectStat.isDirectory()) {
+                // Check if this directory has our session ID (JSONL or not)
+                const files = await readdir(projectPath);
+                const hasSessionFile = files.some(file => file.includes(sessionId));
+
+                if (hasSessionFile) {
+                  foundProjectDirName = project; // Save the directory name
+
+                  // Try to find JSONL file specifically
+                  for (const file of files) {
+                    if (file.includes(sessionId) && file.endsWith('.jsonl')) {
+                      jsonlPath = join(projectPath, file);
+                      break;
+                    }
+                  }
+
+                  break; // Found the project directory
+                }
+              }
+            } catch {
+              continue; // Skip this project directory
+            }
+          }
+        } catch {
+          // Projects directory doesn't exist or can't be read
+        }
+      }
+    } else if (jsonlPath.includes('.claude/projects/')) {
+      // If we already have a JSONL path, extract the project dir name from it
+      const projectMatch = jsonlPath.match(/\.claude\/projects\/([^/]+)\//);
+      if (projectMatch) {
+        foundProjectDirName = projectMatch[1];
+      }
+    }
+
+    // If still no project dir name, try to extract from conversation metadata
+    if (!foundProjectDirName && conversation.path) {
+      // For archived conversations, try to map project name from filename
+      // Filename format: projectname_sessionid_date.md
+      const filename = conversation.path.split('/').pop();
+      const projectNameMatch = filename.match(/^(.+?)_[0-9a-f]{8}-[0-9a-f]{4}/i);
+      if (projectNameMatch) {
+        // This gives us the sanitized project name from the filename
+        // Need to check if a corresponding .claude/projects directory exists
+        const projectsDir = join(homedir(), '.claude', 'projects');
+        try {
+          const projects = await readdir(projectsDir);
+          // Look for a project directory that ends with this project name
+          for (const project of projects) {
+            if (project.endsWith(projectNameMatch[1]) || project === projectNameMatch[1]) {
+              foundProjectDirName = project;
+              break;
+            }
+          }
+        } catch {
+          // Can't read projects directory
+        }
+      }
+    }
+
+    // Check if we found a JSONL file
+    let content;
+    let isMarkdownSource = false;
+
+    if (!jsonlPath.endsWith('.jsonl')) {
+      // JSONL file doesn't exist (archived conversation) - read from markdown export instead
+      spinner.text = 'Reading from markdown export (JSONL no longer exists)...';
+      isMarkdownSource = true;
+      jsonlPath = conversation.path || conversation.exportedFile;
+      content = await readFile(jsonlPath, 'utf-8');
+    } else {
+      // Read and parse the JSONL conversation
+      content = await readFile(jsonlPath, 'utf-8');
+    }
+
     const lines = content.split('\n').filter(line => line.trim());
 
     // Extract essential conversation messages
@@ -1600,25 +1707,89 @@ async function createClaudeContext(conversation) {
     let messageCount = 0;
     const maxMessages = 50; // Limit to recent messages for context
 
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed.content && typeof parsed.content === 'string') {
-          const speaker = parsed.speaker || 'unknown';
-          const messageContent = parsed.content;
+    if (isMarkdownSource) {
+      // Parse markdown format for archived conversations
+      let currentSpeaker = null;
+      let currentContent = '';
 
-          // Only include human and assistant messages (skip system messages)
-          if (speaker === 'human' || speaker === 'assistant') {
+      for (const line of lines) {
+        if (line.startsWith('## 👤 User') || line.startsWith('## 👤 Human')) {
+          // Save previous message if exists
+          if (currentSpeaker && currentContent.trim()) {
             messages.push({
-              speaker,
-              content: messageContent,
-              timestamp: parsed.timestamp || null
+              speaker: currentSpeaker,
+              content: currentContent.trim(),
+              timestamp: null
             });
             messageCount++;
           }
+          currentSpeaker = 'human';
+          currentContent = '';
+        } else if (line.startsWith('## 🤖 Claude') || line.startsWith('## 🤖 Assistant')) {
+          // Save previous message if exists
+          if (currentSpeaker && currentContent.trim()) {
+            messages.push({
+              speaker: currentSpeaker,
+              content: currentContent.trim(),
+              timestamp: null
+            });
+            messageCount++;
+          }
+          currentSpeaker = 'assistant';
+          currentContent = '';
+        } else if (line === '---' || line.startsWith('*This context') || line.startsWith('# Previous Conversation')) {
+          // Skip separators and footer
+          continue;
+        } else if (currentSpeaker) {
+          // Accumulate content for current message
+          currentContent += line + '\n';
         }
-      } catch {
-        // Skip invalid JSON
+      }
+
+      // Save last message
+      if (currentSpeaker && currentContent.trim()) {
+        messages.push({
+          speaker: currentSpeaker,
+          content: currentContent.trim(),
+          timestamp: null
+        });
+        messageCount++;
+      }
+    } else {
+      // Parse JSONL format for active conversations
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line);
+
+          // Parse actual JSONL format: type + message structure
+          if ((parsed.type === 'user' || parsed.type === 'assistant') && parsed.message && !parsed.isMeta) {
+            let messageContent = '';
+
+            if (parsed.message.content) {
+              // Handle content array format
+              if (Array.isArray(parsed.message.content)) {
+                const textParts = parsed.message.content
+                  .filter(item => item.type === 'text')
+                  .map(item => item.text);
+                messageContent = textParts.join('\n');
+              } else if (typeof parsed.message.content === 'string') {
+                messageContent = parsed.message.content;
+              }
+            }
+
+            if (messageContent.trim()) {
+              const speaker = parsed.message.role === 'user' ? 'human' : 'assistant';
+              messages.push({
+                speaker,
+                content: messageContent,
+                timestamp: parsed.timestamp || null
+              });
+              messageCount++;
+            }
+          }
+        } catch {
+          // Skip invalid JSON
+        }
       }
     }
 
@@ -1627,39 +1798,98 @@ async function createClaudeContext(conversation) {
     // Take the most recent messages if there are too many
     const recentMessages = messages.slice(-maxMessages);
 
-    // Format as clean markdown
-    let markdown = `# Context from Claude Conversation\n\n`;
-    markdown += `**Project:** ${conversation.project}\n`;
-    markdown += `**Date:** ${conversation.modified.toLocaleString()}\n`;
-    markdown += `**Messages:** ${recentMessages.length} (most recent)\n\n`;
-    markdown += `---\n\n`;
+    // Extract project directory from the .claude/projects directory name we found
+    let projectDir = process.cwd(); // Default to current directory
 
-    for (const msg of recentMessages) {
-      if (msg.speaker === 'human') {
-        markdown += `## 👤 User\n\n${msg.content}\n\n`;
-      } else if (msg.speaker === 'assistant') {
-        markdown += `## 🤖 Claude\n\n${msg.content}\n\n`;
+    if (foundProjectDirName) {
+      // Convert directory name back to actual path
+      // -Users-nathan-norman-toast-analytics → /Users/nathan.norman/toast-analytics
+      if (foundProjectDirName.startsWith('-Users-nathan-norman-')) {
+        const relativePath = foundProjectDirName.substring('-Users-nathan-norman-'.length);
+        projectDir = join(homedir(), relativePath);
+      } else if (foundProjectDirName === '-Users-nathan-norman') {
+        projectDir = homedir();
+      } else {
+        projectDir = foundProjectDirName.replace(/^-/, '/');
+      }
+    } else {
+      // For archived conversations, try to construct path from clean project name
+      const cleanProject = conversation.project.replace(/^~ \(home\)$/, '~');
+
+      if (cleanProject && cleanProject !== 'Unknown') {
+        // Try common locations
+        const guessedPath = join(homedir(), cleanProject);
+
+        // Check if directory exists
+        try {
+          await stat(guessedPath);
+          projectDir = guessedPath;
+        } catch {
+          // Directory doesn't exist, stick with current directory
+        }
       }
     }
 
-    // Add instructions at the end
+    // Format as clean markdown with clear prompt
+    let markdown = `Below is the conversation history from a previous Claude Code session in the **${conversation.project}** project (${conversation.modified.toLocaleString()}).\n\n`;
+    markdown += `Please review this context and help me continue from where we left off. `;
+    markdown += `You can reference any of the work discussed below and help me build upon it.\n\n`;
+    markdown += `Project Directory: \`${projectDir}\`\n\n`;
     markdown += `---\n\n`;
-    markdown += `*This conversation context was extracted from Claude Code conversation history.*\n`;
-    markdown += `*Use this as context to continue the conversation or understand previous work.*\n`;
+    markdown += `# Previous Conversation Context\n\n`;
+
+    for (const msg of recentMessages) {
+      if (msg.speaker === 'human') {
+        markdown += `## 👤 User\n\n${msg.content}\n\n---\n\n`;
+      } else if (msg.speaker === 'assistant') {
+        markdown += `## 🤖 Claude\n\n${msg.content}\n\n---\n\n`;
+      }
+    }
+
+    // Add footer
+    markdown += `\n*This context contains the ${recentMessages.length} most recent messages from the conversation.*\n`;
+    markdown += `*Extracted from Claude Code session on ${new Date().toLocaleString()}.*\n`;
 
     spinner.text = 'Saving context file...';
 
-    // Save to current directory with sanitized project name
+    // Save context file to current directory, launcher script to /tmp
     const sanitizedProject = conversation.project.replace(/[^a-z0-9-_]/gi, '_');
     const timestamp = new Date().toISOString().slice(0, 10);
     const contextPath = join(process.cwd(), `claude-context-${sanitizedProject}-${timestamp}.md`);
 
+    // Use OS temp directory for launcher script
+    const { tmpdir } = await import('os');
+    const launchScriptPath = join(tmpdir(), `launch-context-${sanitizedProject}-${timestamp}.sh`);
+
     await writeFile(contextPath, markdown);
 
-    spinner.succeed('Context file created!');
+    // Create launcher script that CDs to project and starts Claude with a prompt to read the context
+    const launchScript = `#!/bin/bash
+# Auto-generated launcher for Claude Code with conversation context
+
+echo "🚀 Launching Claude Code in ${projectDir}"
+echo "   With context from: ${contextPath}"
+echo ""
+
+# Change to the project directory
+cd "${projectDir}" || exit 1
+
+# Start Claude Code with an initial prompt to read the context file
+claude "Please read this file to see my previous conversation context, then help me continue from where I left off:
+
+${contextPath}
+
+Read the entire file to understand what we discussed before."
+`;
+
+    await writeFile(launchScriptPath, launchScript);
+    await chmod(launchScriptPath, '755');
+
+    spinner.succeed('Context file and launcher created!');
 
     console.log(colors.success(`\n🚀 Claude Code context created!\n`));
-    console.log(colors.info(`📄 File: ${colors.highlight(contextPath)}`));
+    console.log(colors.info(`📄 Context: ${colors.highlight(contextPath)}`));
+    console.log(colors.info(`🚀 Launcher: ${colors.highlight(launchScriptPath)}`));
     console.log(colors.dim(`📊 ${recentMessages.length} messages extracted\n`));
 
     // Ask if user wants to launch Claude Code with this context
@@ -1669,29 +1899,45 @@ async function createClaudeContext(conversation) {
       message: 'What would you like to do?',
       choices: [
         { name: '🚀 Launch Claude Code with this context', value: 'launch' },
-        { name: '📋 Copy file path to clipboard', value: 'copy' },
+        { name: '📋 Copy launch command to clipboard', value: 'copy' },
         { name: '👀 View file location', value: 'view' },
         { name: '← Back to conversation menu', value: 'back' }
       ]
     }]);
 
     if (action === 'launch') {
-      console.log(colors.info('\n🚀 Launching Claude Code...\n'));
-      console.log(colors.dim('The context file will be opened in your editor.'));
-      console.log(colors.dim('You can reference it in your conversation with Claude Code.\n'));
+      console.clear();
+      console.log(colors.info('\n🚀 Launch Claude Code with Context\n'));
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.primary('\nProject Directory:'));
+      console.log(colors.highlight(`  ${projectDir}\n`));
+      console.log(colors.primary('To launch Claude Code in this project with context:'));
+      console.log(colors.highlight(`  ${launchScriptPath}\n`));
 
-      try {
-        // Launch Claude Code in the current directory
-        await execAsync(`claude ${contextPath}`);
-        console.log(colors.success('\n✅ Claude Code launched!\n'));
-      } catch (error) {
-        console.log(colors.warning('\n⚠️  Could not launch Claude Code automatically'));
-        console.log(colors.dim('You can manually run:'));
-        console.log(colors.highlight(`  claude ${contextPath}\n`));
+      // Copy launch script path to clipboard
+      const copied = await copyToClipboard(launchScriptPath);
+
+      if (copied) {
+        console.log(colors.success('✅ Launcher path copied to clipboard!\n'));
+        console.log(colors.dim('Open a new terminal, paste, and press Enter.\n'));
+      } else {
+        console.log(colors.dim('Copy and run the command above in a new terminal.\n'));
       }
 
-      // Exit the conversation extractor since we're launching Claude Code
-      process.exit(0);
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.dim('\nThe launcher will:'));
+      console.log(colors.dim('  1. Change to the project directory'));
+      console.log(colors.dim('  2. Start Claude Code'));
+      console.log(colors.dim('  3. Load the conversation context automatically\n'));
+
+      await inquirer.prompt([{
+        type: 'input',
+        name: 'continue',
+        message: 'Press Enter to return to menu...',
+        prefix: ''
+      }]);
+
+      return;
     } else if (action === 'copy') {
       const success = await copyToClipboard(contextPath);
       if (success) {
@@ -1832,8 +2078,13 @@ async function runAutomatedSearch(args) {
     const searchResult = await engine.search(searchTerm, { limit });
     results = searchResult.results || [];
   } else {
-    // No search term - return all conversations
+    // No search term - return all conversations sorted by date (newest first)
     const allConvos = Array.from(engine.conversationData.values())
+      .sort((a, b) => {
+        const dateA = a.modified ? new Date(a.modified) : new Date(0);
+        const dateB = b.modified ? new Date(b.modified) : new Date(0);
+        return dateB - dateA; // Descending order (newest first)
+      })
       .slice(0, limit)
       .map(conv => ({
         project: conv.project,
@@ -1933,6 +2184,188 @@ function parseArgs() {
   return args;
 }
 
+/**
+ * Helper function to show setup menu in a loop
+ * This allows returning to the menu after operations like hook install/uninstall
+ * without going through main() which would skip the menu if setup is complete
+ */
+async function showSetupMenuWithLoop(setupManager, initialStatus) {
+  let currentStatus = initialStatus;
+
+  while (true) {
+    const choice = await showSetupMenu(currentStatus);
+
+    // Debug: log the choice
+    if (process.env.DEBUG) {
+      console.log('DEBUG: User selected:', choice);
+    }
+
+    // Handle exit
+    if (choice === 'exit') {
+      process.exit(0);
+    }
+
+    // Handle skip_setup - break out of loop to continue to search
+    if (choice === 'skip_setup') {
+      return choice;
+    }
+
+    // Handle hook operations - they need to return to menu
+    if (choice === 'install_hook') {
+      // Clear screen and show explanation
+      console.clear();
+      console.log('\n' + colors.info('📋 About the Auto-Export Hook'));
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.primary('\nWhat does it do?'));
+      console.log('  Automatically exports conversations to markdown when');
+      console.log('  your Claude Code sessions end.');
+      console.log(colors.primary('\nHow does it work?'));
+      console.log('  • Triggers on SessionEnd event (when you exit Claude Code)');
+      console.log('  • Reads the conversation JSONL file');
+      console.log('  • Converts it to clean markdown format');
+      console.log('  • Saves to your configured export directory');
+      console.log(colors.primary('\nTechnical details:'));
+      console.log('  • Adds hook to ~/.claude/settings.json');
+      console.log('  • Hook script: .claude/hooks/auto-export-conversation.js');
+      console.log('  • Timeout: 10 seconds (non-blocking)');
+      console.log('  • Requires: Node.js (already installed)');
+      console.log(colors.dim('\n' + '━'.repeat(60)));
+
+      const { confirmInstall } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'confirmInstall',
+        message: 'Install the auto-export hook?',
+        default: true
+      }]);
+
+      if (!confirmInstall) {
+        console.clear();
+        console.log(colors.warning('\n✖ Installation cancelled'));
+        console.log(colors.dim('Returning to menu in 2 seconds...\n'));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Explicitly refresh status before showing menu again
+        currentStatus = await setupManager.getSetupStatus();
+        // Clear and continue to show menu
+        console.clear();
+        continue;
+      }
+
+      const hookManager = new HookManager();
+      const spinner = ora('Installing auto-export hook...').start();
+      const result = await hookManager.installHook();
+      if (result.success) {
+        spinner.succeed(colors.success(result.message));
+      } else {
+        spinner.fail(colors.error(result.message));
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Refresh status and clear screen before showing menu again
+      currentStatus = await setupManager.getSetupStatus();
+      console.clear();
+      continue;
+    }
+
+    if (choice === 'uninstall_hook') {
+      console.clear();
+      const hookManager = new HookManager();
+      const spinner = ora('Uninstalling auto-export hook...').start();
+      const result = await hookManager.uninstallHook();
+      if (result.success) {
+        spinner.succeed(colors.success(result.message));
+      } else {
+        spinner.fail(colors.error(result.message));
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Refresh status and clear screen before showing menu again
+      currentStatus = await setupManager.getSetupStatus();
+      console.clear();
+      continue;
+    }
+
+    // Handle /remember command operations
+    if (choice === 'install_remember') {
+      console.clear();
+      console.log('\n' + colors.info('📋 About the /remember Command'));
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.primary('\nWhat does it do?'));
+      console.log('  Lets you search past conversations using natural language');
+      console.log('  directly from Claude Code with the /remember command.');
+      console.log(colors.primary('\nHow to use it?'));
+      console.log('  /remember when we discussed deploying to toast-analytics?');
+      console.log('  /remember MCP server setup from last week');
+      console.log('  /remember what did I work on yesterday?');
+      console.log(colors.primary('\nHow does it work?'));
+      console.log('  • Installed as a Claude Code slash command');
+      console.log('  • Claude reads your query and searches conversation history');
+      console.log('  • Uses claude-logs programmatically to find matches');
+      console.log('  • Returns relevant conversations or asks for clarification');
+      console.log(colors.primary('\nTechnical details:'));
+      console.log('  • Adds command to ~/.claude/settings.json');
+      console.log('  • Command script: .claude/commands/remember.js');
+      console.log('  • Timeout: 30 seconds');
+      console.log(colors.dim('\n' + '━'.repeat(60)));
+
+      const { confirmInstall } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'confirmInstall',
+        message: 'Install the /remember command?',
+        default: true
+      }]);
+
+      if (!confirmInstall) {
+        console.clear();
+        console.log(colors.warning('\n✖ Installation cancelled'));
+        console.log(colors.dim('Returning to menu...\n'));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        currentStatus = await setupManager.getSetupStatus();
+        console.clear();
+        continue;
+      }
+
+      const commandManager = new CommandManager();
+      const spinner = ora('Installing /remember command...').start();
+      const result = await commandManager.installRememberCommand();
+      if (result.success) {
+        spinner.succeed(colors.success(result.message));
+      } else {
+        spinner.fail(colors.error(result.message));
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      currentStatus = await setupManager.getSetupStatus();
+      console.clear();
+      continue;
+    }
+
+    if (choice === 'uninstall_remember') {
+      console.clear();
+      const commandManager = new CommandManager();
+      const spinner = ora('Uninstalling /remember command...').start();
+      const result = await commandManager.uninstallRememberCommand();
+      if (result.success) {
+        spinner.succeed(colors.success(result.message));
+      } else {
+        spinner.fail(colors.error(result.message));
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      currentStatus = await setupManager.getSetupStatus();
+      console.clear();
+      continue;
+    }
+
+    // For choices that need to be handled by main()'s switch statement, exit the loop
+    // These are setup-related operations that change system state
+    const mainHandledChoices = ['extract_only', 'index_only', 'change_location', 'view_analytics'];
+    if (mainHandledChoices.includes(choice)) {
+      return choice;
+    }
+
+    // If we get here with an unexpected choice, log it and continue showing menu
+    console.error(colors.error(`Unexpected menu choice: ${choice}`));
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    continue;
+  }
+}
+
 async function main() {
   // Check for CLI arguments (non-interactive mode)
   const args = parseArgs();
@@ -1955,12 +2388,12 @@ async function main() {
   
   // Check if index-based search is available
   let searchInterface = null;
-  
-  // Show setup menu if needed
-  if (status.isFirstTime || status.needsSetup) {
-    const setupChoice = await showSetupMenu(status);
-    
-    switch (setupChoice) {
+
+  // Always show setup menu (uses loop to handle hook operations properly)
+  // This allows users to access advanced options like hook management even when setup is complete
+  const setupChoice = await showSetupMenuWithLoop(setupManager, status);
+
+  switch (setupChoice) {
     case 'quick_setup':
       // Extract all conversations
       if (status.needsExtraction) {
@@ -1987,8 +2420,12 @@ async function main() {
         
     case 'extract_only':
       const extractor = new BulkExtractor();
-      await extractor.extractAllConversations(status.conversations, status.exportLocation);
-      await setupManager.markExtractComplete(status.conversations.length);
+      // Only extract conversations that need extraction, not all conversations
+      const conversationsToExtract = status.needsExtractionList && status.needsExtractionList.length > 0
+        ? status.needsExtractionList
+        : status.conversations;
+      await extractor.extractAllConversations(conversationsToExtract, status.exportLocation);
+      await setupManager.markExtractComplete(status.conversationCount);
       break;
         
     case 'index_only':
@@ -2008,7 +2445,13 @@ async function main() {
       await setupManager.updateExportLocation(newLocation);
       // Re-run main to show updated menu
       return main();
-        
+
+    // Hook operations are handled in showSetupMenuWithLoop
+    // They should never reach this point
+    case 'install_hook':
+    case 'uninstall_hook':
+      throw new Error('Hook operations should be handled in showSetupMenuWithLoop');
+
     case 'view_analytics':
       await showAnalytics(status);
       // Re-run main to return to menu
@@ -2048,10 +2491,9 @@ async function main() {
       }
       break;
 
-    case 'exit':
-      console.log(colors.dim('\nGoodbye! 👋'));
-      process.exit(0);
-    }
+  case 'exit':
+    console.log(colors.dim('\nGoodbye! 👋'));
+    process.exit(0);
   }
 
   // Only check/build index if searchInterface wasn't already set by setup menu
@@ -2069,8 +2511,25 @@ async function main() {
         needsRebuild = await miniSearch.needsRebuild();
 
         if (needsRebuild) {
-          console.log(colors.warning('\n⚠️  Search index is outdated due to new conversations\n'));
-          indexLoaded = false; // Force rebuild
+          // Use smart update - will do incremental if few files, full if many
+          const spinner = ora('Updating search index with new conversations...').start();
+          try {
+            const updateStats = await miniSearch.smartUpdate();
+            await miniSearch.saveIndex();
+
+            if (updateStats.newFiles > 0) {
+              spinner.succeed(`Added ${updateStats.newFiles} new conversations to index`);
+              await setupManager.markIndexComplete(updateStats.totalConversations);
+            } else {
+              spinner.succeed('Index is up to date');
+            }
+          } catch (error) {
+            spinner.fail('Failed to update index');
+            console.error(colors.error('Error:', error.message));
+          }
+
+          searchInterface = miniSearch;
+          console.log(colors.success('⚡ Using indexed search (fast mode)\n'));
         } else {
           searchInterface = miniSearch;
           console.log(colors.success('⚡ Using indexed search (fast mode)\n'));
@@ -2081,18 +2540,15 @@ async function main() {
     }
   }
 
-  // If no index exists or it needs rebuilding, build it automatically
+  // If no index exists, build it for first time
   if (!indexLoaded) {
     const miniSearch = searchInterface || new MiniSearchEngine();
-    const message = needsRebuild 
-      ? '\n🔄 Rebuilding search index with latest conversations...'
-      : '\n📦 First-time setup: Building search index for optimal performance...';
-    
-    console.log(colors.info(message));
+
+    console.log(colors.info('\n📦 First-time setup: Building search index for optimal performance...'));
     console.log(colors.dim('This takes about 30 seconds.\n'));
-    
+
     const spinner = ora('Building search index...').start();
-    
+
     try {
       // Build the index
       const buildStats = await miniSearch.buildIndex();

@@ -2,6 +2,8 @@ import { readFile, writeFile, mkdir, readdir, stat, access } from 'fs/promises';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { HookManager } from './hook-manager.js';
+import { CommandManager } from './command-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -379,28 +381,46 @@ class SetupManager {
     const indexExists = await this.checkIndexFile();
     
     // Check which conversations are actually extracted
-    // Map by project name, keeping the most recent export for each project
-    const extractedMap = new Map();
+    // Map by session ID (new format) or project name (old format for backward compatibility)
+    const extractedBySessionId = new Map();
+    const extractedByProject = new Map();
+
     for (const file of exportedFiles) {
-      // Extract project name from filename (format: projectname_YYYY-MM-DD.md)
-      const match = file.name.match(/^(.+?)_\d{4}-\d{2}-\d{2}\.(md|json|html)$/);
-      if (match) {
-        const projectKey = match[1];
-        const existing = extractedMap.get(projectKey);
-        // Keep the most recent export for each project
+      // Try new format first: projectname_sessionid_YYYY-MM-DD.ext
+      const newFormatMatch = file.name.match(/^(.+?)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_\d{4}-\d{2}-\d{2}\.(md|json|html)$/i);
+      if (newFormatMatch) {
+        const sessionId = newFormatMatch[2];
+        extractedBySessionId.set(sessionId, file);
+        continue;
+      }
+
+      // Fall back to old format: projectname_YYYY-MM-DD.ext
+      const oldFormatMatch = file.name.match(/^(.+?)_\d{4}-\d{2}-\d{2}\.(md|json|html)$/);
+      if (oldFormatMatch) {
+        const projectKey = oldFormatMatch[1];
+        const existing = extractedByProject.get(projectKey);
+        // Keep the most recent export for each project (old format only)
         if (!existing || file.modified > existing.modified) {
-          extractedMap.set(projectKey, file);
+          extractedByProject.set(projectKey, file);
         }
       }
     }
-    
+
     // Count how many conversations are actually extracted
     let actuallyExtracted = 0;
     const needsExtraction = [];
     for (const conv of conversations) {
+      const sessionId = conv.file ? conv.file.replace('.jsonl', '') : null;
       const projectKey = conv.project.replace(/[^a-zA-Z0-9-_]/g, '_');
-      const extracted = extractedMap.get(projectKey);
-      
+
+      // Try to match by session ID first (most accurate)
+      let extracted = sessionId ? extractedBySessionId.get(sessionId) : null;
+
+      // Fall back to project-based matching (for old exports)
+      if (!extracted) {
+        extracted = extractedByProject.get(projectKey);
+      }
+
       if (extracted) {
         // Check if the extracted file is older than the conversation
         if (extracted.modified >= conv.modified) {
@@ -414,11 +434,19 @@ class SetupManager {
     }
     
     const isIndexOutdated = this.isIndexOutdated(config, conversations);
-    
+
     // More accurate status detection
     const allExtracted = actuallyExtracted === conversations.length;
     const indexReady = indexExists && !isIndexOutdated;
-    
+
+    // Check hook status
+    const hookManager = new HookManager();
+    const hookStatus = await hookManager.getHookStatus();
+
+    // Check slash command status
+    const commandManager = new CommandManager();
+    const commandStatus = await commandManager.getCommandStatus();
+
     return {
       isFirstTime: !config.setupComplete && exportedFiles.length === 0,
       needsSetup: !allExtracted || !indexReady,
@@ -436,13 +464,17 @@ class SetupManager {
       conversations,
       needsExtractionList: needsExtraction,
       exportedFiles,
-      config
+      config,
+      hookInstalled: hookStatus.installed,
+      hookScriptExists: hookStatus.scriptExists,
+      rememberCommandInstalled: commandStatus.installed
     };
   }
 
   async markExtractComplete(extractedCount) {
     const config = await this.loadConfig();
-    config.extractedAll = true;
+    // Don't set extractedAll to true - let getSetupStatus() calculate it dynamically
+    // This ensures accurate status based on actual file comparisons
     config.extractedCount = extractedCount;
     config.extractedDate = new Date().toISOString();
     await this.saveConfig(config);

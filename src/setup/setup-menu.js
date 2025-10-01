@@ -49,7 +49,6 @@ export async function showSetupMenu(status) {
   // Show searchable conversations count
   if (hasArchiveIndex && status.config.conversationsIndexed > 0) {
     statusLines.push(`  ${colors.success('📚 Searchable Conversations:')} ${colors.highlight(status.config.conversationsIndexed + ' total')}`);
-    statusLines.push(`  ${colors.dim('   (includes historical archive)')}`);
   }
 
   // Index status
@@ -76,6 +75,20 @@ export async function showSetupMenu(status) {
   }
   statusLines.push(`  ⚡ Search Index: ${colors.accent(searchIndexStatus)}`);
 
+  // Hook status
+  const hookIcon = status.hookInstalled ? '✅' : '❌';
+  const hookStatus = status.hookInstalled
+    ? colors.success(`${hookIcon} Auto-Export Hook: Installed`)
+    : colors.warning(`${hookIcon} Auto-Export Hook: Not installed`);
+  statusLines.push(`  🔗 ${hookStatus}`);
+
+  // Slash command status
+  const commandIcon = status.rememberCommandInstalled ? '✅' : '❌';
+  const commandStatus = status.rememberCommandInstalled
+    ? colors.success(`${commandIcon} /remember Command: Installed`)
+    : colors.warning(`${commandIcon} /remember Command: Not installed`);
+  statusLines.push(`  ⚡ ${commandStatus}`);
+
   statusLines.push('');
   
   // Display status box
@@ -89,8 +102,9 @@ export async function showSetupMenu(status) {
   // Build menu choices
   const choices = [];
 
-  // If we have an archive index, prioritize search and skip extraction concerns
-  const needsAnySetup = hasArchiveIndex ? status.needsIndexing : (status.needsExtraction || status.needsIndexing);
+  // Check if any setup is needed
+  // Even with archive index, we should still offer extraction if conversations need it
+  const needsAnySetup = status.needsExtraction || status.needsIndexing;
 
   // If everything is ready, offer to go straight to search
   if (!needsAnySetup) {
@@ -99,51 +113,26 @@ export async function showSetupMenu(status) {
       value: 'skip_setup',
       short: 'Search'
     });
-    choices.push(new inquirer.Separator(colors.dim('─────── Maintenance ───────')));
   }
 
-  // Quick setup option (if needed) - skip extraction if we have archive
-  if (needsAnySetup) {
-    const actions = [];
-    if (!hasArchiveIndex && status.needsExtraction) {
-      actions.push(status.needsExtractionCount > 0 ? `Update ${status.needsExtractionCount} conversations` : 'Extract');
-    }
-    if (status.needsIndexing) {
-      actions.push(status.indexOutdated ? 'Rebuild Index' : 'Build Index');
-    }
-    const timeEstimate = (!hasArchiveIndex && status.needsExtraction) && status.needsIndexing ? '~3 min' :
-      (!hasArchiveIndex && status.needsExtraction) ? '~2 min' : '~30 sec';
-
-    if (actions.length > 0) {
-      choices.push({
-        name: `🚀 ${colors.success('Quick Setup')} (${actions.join(' + ')}) ${colors.dim(timeEstimate)}`,
-        value: 'quick_setup',
-        short: 'Quick Setup'
-      });
-    }
-  }
-
-  // Individual options - skip extraction if we have archive
-  if (!hasArchiveIndex && status.needsExtraction) {
+  // Setup options
+  if (status.needsExtraction) {
     const extractText = status.needsExtractionCount > 0 && status.needsExtractionCount < status.conversationCount
-      ? `Update ${status.needsExtractionCount} Conversations`
+      ? `Extract ${status.needsExtractionCount} New Conversations`
       : 'Extract All Conversations';
-    const timeEstimate = status.needsExtractionCount > 0
-      ? `~${Math.ceil(status.needsExtractionCount * 0.8)} sec`
-      : '~2 min';
     choices.push({
-      name: `📤 ${extractText} Only ${colors.dim(`(${timeEstimate})`)}`,
+      name: `📤 ${colors.success(extractText)}`,
       value: 'extract_only',
-      short: 'Extract Only'
+      short: 'Extract'
     });
   }
-  
+
   if (status.needsIndexing) {
-    const indexAction = status.indexOutdated ? 'Rebuild' : 'Build';
+    const indexAction = status.indexOutdated ? 'Rebuild Search Index' : 'Build Search Index';
     choices.push({
-      name: `🗂️  ${indexAction} Search Index Only ${colors.dim('(~30 sec)')}`,
+      name: `🗂️  ${colors.success(indexAction)}`,
       value: 'index_only',
-      short: 'Index Only'
+      short: 'Index'
     });
   }
   
@@ -156,7 +145,37 @@ export async function showSetupMenu(status) {
       short: 'Change Location'
     }
   );
-  
+
+  // Hook management option
+  if (status.hookInstalled) {
+    choices.push({
+      name: `🔗 ${colors.warning('Uninstall Auto-Export Hook')} ${colors.dim('(remove SessionEnd hook)')}`,
+      value: 'uninstall_hook',
+      short: 'Uninstall Hook'
+    });
+  } else {
+    choices.push({
+      name: `🔗 ${colors.success('Install Auto-Export Hook')} ${colors.dim('(auto-export on session end)')}`,
+      value: 'install_hook',
+      short: 'Install Hook'
+    });
+  }
+
+  // Slash command management option
+  if (status.rememberCommandInstalled) {
+    choices.push({
+      name: `⚡ ${colors.warning('Uninstall /remember Command')} ${colors.dim('(remove slash command)')}`,
+      value: 'uninstall_remember',
+      short: 'Uninstall /remember'
+    });
+  } else {
+    choices.push({
+      name: `⚡ ${colors.success('Install /remember Command')} ${colors.dim('(search past conversations)')}`,
+      value: 'install_remember',
+      short: 'Install /remember'
+    });
+  }
+
   // Analytics option (if we have data)
   if (status.extractedCount > 0) {
     choices.push({

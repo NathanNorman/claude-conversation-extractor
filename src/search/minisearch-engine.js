@@ -35,6 +35,40 @@ export class MiniSearchEngine {
   }
 
   /**
+   * Extract clean display name from directory-based project name
+   * Converts: -Users-nathan-norman-toast-analytics → toast-analytics
+   * @param {string} dirName - Directory-based project name
+   * @returns {string} Clean display name
+   */
+  getDisplayName(dirName) {
+    if (!dirName) return 'Unknown';
+
+    // Remove common prefixes that are just path-based
+    const prefixes = [
+      '-Users-nathan-norman-',
+      '-Users-nathan-norman--', // double dash for temp dirs
+      'Users-nathan-norman-',
+      '/Users/nathan.norman/',
+      join(homedir(), '').replace(/\\/g, '/') + '/'
+    ];
+
+    let displayName = dirName;
+    for (const prefix of prefixes) {
+      if (displayName.startsWith(prefix)) {
+        displayName = displayName.substring(prefix.length);
+        break;
+      }
+    }
+
+    // Handle home directory case
+    if (displayName === '-Users-nathan-norman' || displayName === 'Users-nathan-norman') {
+      displayName = '~ (home)';
+    }
+
+    return displayName || dirName; // Fallback to original if nothing matched
+  }
+
+  /**
    * Check if a file is a documentation file (not a conversation)
    * @param {string} filename - Name of the file
    * @returns {boolean} True if it's a documentation file
@@ -73,21 +107,39 @@ export class MiniSearchEngine {
       messageCount: 0
     };
 
-    // Extract metadata from header
+    // Extract metadata from header - handle both old and new formats
     for (let i = 0; i < Math.min(20, lines.length); i++) {
       const line = lines[i];
-      if (line.startsWith('Project:')) {
-        conversation.project = line.split('Project:')[1].trim();
-      } else if (line.startsWith('Session ID:')) {
-        conversation.sessionId = line.split('Session ID:')[1].trim();
-      } else if (line.startsWith('Date:')) {
-        const dateStr = line.split('Date:')[1].trim();
+
+      // Handle title format: # Claude Conversation - ProjectName
+      if (line.startsWith('# Claude Conversation -')) {
+        conversation.project = line.split('# Claude Conversation -')[1].trim();
+      } else if (line.startsWith('# Claude Code Conversation')) {
+        // Continue to next line for metadata
+        continue;
+      }
+
+      // Handle metadata fields (both plain and bold markdown)
+      if (line.startsWith('Project:') || line.startsWith('**Project:**')) {
+        conversation.project = line.split(/Project:\*?\*?/)[1].trim();
+      } else if (line.startsWith('Session ID:') || line.startsWith('**Session ID:**')) {
+        conversation.sessionId = line.split(/Session ID:\*?\*?/)[1].trim();
+      } else if (line.startsWith('Date:') || line.startsWith('**Date:**')) {
+        const dateStr = line.split(/Date:\*?\*?/)[1].trim();
         conversation.date = dateStr;
         try {
           conversation.modified = new Date(dateStr).toISOString();
         } catch {
           conversation.modified = new Date().toISOString();
         }
+      }
+    }
+
+    // If no session ID found, try to extract from filename
+    if (!conversation.sessionId) {
+      const filenameMatch = basename(markdownPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (filenameMatch) {
+        conversation.sessionId = filenameMatch[1];
       }
     }
 
@@ -196,10 +248,13 @@ export class MiniSearchEngine {
           continue;
         }
 
+        const rawProject = conv.project || 'Unknown';
+        const displayProject = this.getDisplayName(rawProject);
+
         const document = {
           id: conv.id || `conv_${conversationIndex++}`,
           content: conv.fullText || conv.preview || '',
-          project: conv.project || 'Unknown',
+          project: displayProject,
           keywords: (conv.extractedKeywords || []).join(' '),
           toolsUsed: (conv.toolsUsed || []).join(' '),
           preview: conv.preview || '',
@@ -208,10 +263,11 @@ export class MiniSearchEngine {
           messageCount: conv.messageCount || 0
         };
         documents.push(document);
-        
+
         // Store conversation data for retrieval
         this.conversationData.set(document.id, {
-          project: conv.project,
+          project: displayProject,
+          rawProject: rawProject,
           exportedFile: conv.exportedFile,
           originalPath: conv.originalPath,
           modified: conv.modified,
@@ -242,17 +298,24 @@ export class MiniSearchEngine {
           const entries = await readdir(dir);
 
           for (const entry of entries) {
+            // Skip hidden directories and backup directories
+            if (entry.startsWith('.') || entry.startsWith('archive-backup')) {
+              continue;
+            }
+
             const fullPath = join(dir, entry);
             const entryStat = await stat(fullPath);
 
             if (entryStat.isDirectory()) {
-              // Recursively scan subdirectories
-              await scanDirectory(fullPath, entry);
+              // Skip subdirectories - we only want root level files now
+              // All conversations have been consolidated to root
+              continue;
             } else if (entry.endsWith('.md') && !this.isDocumentationFile(entry)) {
               markdownFiles.push({
                 path: fullPath,
                 project: prefix || basename(dirname(fullPath)),
-                filename: entry
+                filename: entry,
+                mtime: entryStat.mtime // Use file modification time for accurate timestamps
               });
             }
           }
@@ -289,14 +352,26 @@ export class MiniSearchEngine {
           const sessionIdMatch = file.filename.match(/([a-f0-9]{8})\.md$/);
           const sessionId = sessionIdMatch ? sessionIdMatch[1] : conversationIndex.toString();
 
+          // Use clean display name for project
+          const rawProject = conversation.project || _project;
+          const displayProject = this.getDisplayName(rawProject);
+
+          // Use parsed date if it exists and looks valid, otherwise use file mtime
+          // Check if conversation.modified has more than just a date (has time component)
+          const hasTimeComponent = conversation.modified && (
+            conversation.modified.includes('T') || // ISO format: 2025-10-01T12:00:00Z
+            conversation.modified.includes(':')    // Space format: 2025-10-01 12:00:00
+          );
+          const modifiedDate = hasTimeComponent ? conversation.modified : (file.mtime ? file.mtime.toISOString() : new Date().toISOString());
+
           const document = {
             id: `${_project}_${sessionId}`,
             content: conversation.fullText.trim(),
-            project: conversation.project || _project,
+            project: displayProject,
             keywords: '',
             toolsUsed: '',
             preview: preview,
-            modified: conversation.modified || new Date().toISOString(),
+            modified: modifiedDate,
             wordCount: conversation.wordCount,
             messageCount: conversation.messageCount
           };
@@ -305,7 +380,8 @@ export class MiniSearchEngine {
 
           // Store conversation data for retrieval
           this.conversationData.set(document.id, {
-            project: conversation.project || _project,
+            project: displayProject,
+            rawProject: rawProject, // Keep original for reference
             exportedFile: filePath,
             originalPath: filePath,
             modified: document.modified,
@@ -968,11 +1044,202 @@ export class MiniSearchEngine {
   }
 
   /**
-   * Update index incrementally - rebuild from scratch
+   * Smart index update - incremental for small changes, full rebuild for large changes
+   */
+  async smartUpdate() {
+    // Load existing index
+    const loaded = await this.loadIndex();
+    if (!loaded) {
+      return await this.buildIndex();
+    }
+
+    // Check how many new files there are
+    const lastBuildTime = new Date(this.stats.indexedAt);
+    const files = await readdir(this.exportDir);
+    let newFileCount = 0;
+
+    for (const file of files) {
+      // Skip backups, hidden files, and non-md files
+      if (file.startsWith('.') || file.startsWith('archive-backup') || !file.endsWith('.md') || this.isDocumentationFile(file)) {
+        continue;
+      }
+      const filePath = join(this.exportDir, file);
+      try {
+        const fileStat = await stat(filePath);
+        // Skip directories
+        if (fileStat.isDirectory()) {
+          continue;
+        }
+        if (fileStat.mtime > lastBuildTime) {
+          newFileCount++;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    // If more than 20% new files, do full rebuild (faster and ensures consistency)
+    const threshold = this.stats.totalConversations * 0.2;
+    if (newFileCount > threshold) {
+      this.logger.info(`${newFileCount} new files (>${threshold.toFixed(0)} threshold) - doing full rebuild`);
+      const result = await this.buildIndex();
+      return {
+        ...result,
+        newFiles: newFileCount,
+        method: 'full_rebuild'
+      };
+    }
+
+    // Otherwise do incremental update
+    const result = await this.updateIndex();
+    return {
+      ...result,
+      method: 'incremental'
+    };
+  }
+
+  /**
+   * Update index incrementally - only add new/modified files
    */
   async updateIndex() {
-    // For now, just rebuild the entire index
-    return await this.buildIndex();
+    // Load existing index first
+    const loaded = await this.loadIndex();
+    if (!loaded) {
+      // No existing index - do full build
+      return await this.buildIndex();
+    }
+
+    // Get last build time
+    const lastBuildTime = new Date(this.stats.indexedAt);
+
+    // Scan for files newer than last build
+    if (!existsSync(this.exportDir)) {
+      this.logger.warn(`Export directory does not exist: ${this.exportDir}`);
+      return { totalDocuments: 0, totalConversations: 0, newFiles: 0 };
+    }
+
+    const files = await readdir(this.exportDir);
+    const newFiles = [];
+
+    for (const file of files) {
+      // Skip backups, hidden files, and non-md files
+      if (file.startsWith('.') || file.startsWith('archive-backup') || !file.endsWith('.md') || this.isDocumentationFile(file)) {
+        continue;
+      }
+
+      const filePath = join(this.exportDir, file);
+      try {
+        const fileStat = await stat(filePath);
+
+        // Skip directories
+        if (fileStat.isDirectory()) {
+          continue;
+        }
+
+        // Only process files modified after last index build
+        if (fileStat.mtime > lastBuildTime) {
+          newFiles.push({ path: filePath, name: file, mtime: fileStat.mtime });
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (newFiles.length === 0) {
+      this.logger.info('Index is up to date - no new files to add');
+      return {
+        totalDocuments: this.stats.totalDocuments,
+        totalConversations: this.stats.totalConversations,
+        newFiles: 0
+      };
+    }
+
+    this.logger.info(`Processing ${newFiles.length} new/modified files`);
+
+    // Process only new files
+    const newDocuments = [];
+    const updatedDocuments = [];
+
+    for (const file of newFiles) {
+      try {
+        const conversation = await this.parseMarkdownConversation(file.path);
+
+        if (!conversation.sessionId) {
+          this.logger.warn(`Skipping ${file.name}: no session ID`);
+          continue;
+        }
+        if (!conversation.fullText || conversation.fullText.trim().length === 0) {
+          this.logger.warn(`Skipping ${file.name}: empty content`);
+          continue;
+        }
+
+        const rawProject = conversation.project || 'Unknown';
+        const displayProject = this.getDisplayName(rawProject);
+
+        // Use parsed date if it has time component (full ISO), otherwise use file mtime
+        const hasTimeComponent = conversation.modified && conversation.modified.includes('T');
+        const modifiedDate = hasTimeComponent ? conversation.modified : (file.mtime ? file.mtime.toISOString() : new Date().toISOString());
+
+        const document = {
+          id: conversation.sessionId,
+          content: conversation.fullText,
+          project: displayProject,
+          keywords: '',
+          toolsUsed: '',
+          preview: conversation.fullText.substring(0, 200),
+          modified: modifiedDate,
+          wordCount: conversation.wordCount,
+          messageCount: conversation.messageCount
+        };
+
+        // Check if this session ID already exists in index
+        const existingDoc = this.conversationData.get(conversation.sessionId);
+        if (existingDoc) {
+          // Update existing document
+          this.miniSearch.discard(conversation.sessionId);
+          updatedDocuments.push(document);
+        } else {
+          // New document
+          newDocuments.push(document);
+        }
+
+        // Store/update conversation data
+        this.conversationData.set(document.id, {
+          project: displayProject,
+          rawProject: rawProject,
+          exportedFile: file.path,
+          originalPath: file.path,
+          modified: conversation.modified,
+          wordCount: conversation.wordCount,
+          messageCount: conversation.messageCount,
+          preview: document.preview,
+          fullText: conversation.fullText,
+          content: conversation.fullText,
+          _fullText: conversation.fullText,
+          _content: conversation.fullText
+        });
+      } catch (error) {
+        this.logger.error(`Error processing ${file.name}: ${error.message}`);
+      }
+    }
+
+    // Add/update documents in index
+    const allDocuments = [...newDocuments, ...updatedDocuments];
+    if (allDocuments.length > 0) {
+      this.miniSearch.addAll(allDocuments);
+    }
+
+    // Update stats
+    this.stats.totalDocuments += newDocuments.length; // Only count truly new ones
+    this.stats.totalConversations += newDocuments.length;
+    this.stats.indexedAt = new Date().toISOString();
+
+    return {
+      totalDocuments: this.stats.totalDocuments,
+      totalConversations: this.stats.totalConversations,
+      newFiles: newDocuments.length,
+      updatedFiles: updatedDocuments.length
+    };
   }
 
   /**
