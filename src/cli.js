@@ -886,11 +886,23 @@ async function showLiveSearch(searchInterface = null) {
     // Get all unique repos from conversations
     const getAllRepos = () => {
       const repos = new Set();
-      conversations.forEach(conv => {
-        if (conv.project) {
-          repos.add(conv.project);
+
+      // If using indexed search, get clean project names from the index
+      if (searchInterface && searchInterface.conversationData) {
+        for (const conv of searchInterface.conversationData.values()) {
+          if (conv.project) {
+            repos.add(conv.project);
+          }
         }
-      });
+      } else {
+        // Fall back to raw conversation data
+        conversations.forEach(conv => {
+          if (conv.project) {
+            repos.add(conv.project);
+          }
+        });
+      }
+
       return Array.from(repos).sort();
     };
     
