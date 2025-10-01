@@ -31,19 +31,12 @@ export class CommandManager {
    */
   async isRememberCommandInstalled() {
     try {
-      if (!existsSync(this.settingsPath)) {
-        return false;
-      }
+      // Check for markdown file in commands directory (new approach)
+      const projectCommandPath = join(process.cwd(), '.claude', 'commands', 'remember.md');
+      const globalCommandPath = join(this.commandsDir, 'remember.md');
 
-      const settingsData = await readFile(this.settingsPath, 'utf-8');
-      const settings = JSON.parse(settingsData);
-
-      // Check if slashCommands exist and has /remember
-      if (!settings.slashCommands || !settings.slashCommands.remember) {
-        return false;
-      }
-
-      return true;
+      // Command is installed if either markdown file exists
+      return existsSync(projectCommandPath) || existsSync(globalCommandPath);
     } catch (error) {
       this.logger.error(colors.error(`Error checking command status: ${error.message}`));
       return false;
@@ -51,71 +44,58 @@ export class CommandManager {
   }
 
   /**
-   * Get the command script path
+   * Get the command file path (markdown-based slash command)
    * @returns {string}
    */
-  getRememberScriptPath() {
-    // Use absolute path to globally installed package
-    const globalPaths = [
-      '/opt/homebrew/lib/node_modules/claude-conversation-extractor/.claude/commands/remember.js',
-      '/usr/local/lib/node_modules/claude-conversation-extractor/.claude/commands/remember.js'
-    ];
+  getRememberCommandPath() {
+    // Check project-level first, then global
+    const projectPath = join(process.cwd(), '.claude', 'commands', 'remember.md');
+    if (existsSync(projectPath)) {
+      return projectPath;
+    }
 
-    // Return the most common path on macOS
-    return globalPaths[0];
+    return join(this.commandsDir, 'remember.md');
   }
 
   /**
-   * Install the /remember command
+   * Install the /remember command (creates markdown file in project)
    * @returns {Promise<{success: boolean, message: string}>}
    */
   async installRememberCommand() {
     try {
-      // Ensure settings directory exists
-      const settingsDir = join(homedir(), '.claude');
-      if (!existsSync(settingsDir)) {
-        await mkdir(settingsDir, { recursive: true });
+      // Create .claude/commands directory in current project
+      const commandsDir = join(process.cwd(), '.claude', 'commands');
+      if (!existsSync(commandsDir)) {
+        await mkdir(commandsDir, { recursive: true });
       }
 
-      // Ensure commands directory exists
-      if (!existsSync(this.commandsDir)) {
-        await mkdir(this.commandsDir, { recursive: true });
-      }
+      const commandPath = join(commandsDir, 'remember.md');
 
-      // Read or create settings
-      let settings = {};
-      if (existsSync(this.settingsPath)) {
-        const settingsData = await readFile(this.settingsPath, 'utf-8');
-        settings = JSON.parse(settingsData);
-      }
-
-      // Initialize slashCommands structure if needed
-      if (!settings.slashCommands) {
-        settings.slashCommands = {};
-      }
-
-      // Check if already installed
-      if (settings.slashCommands.remember) {
+      // Check if already exists
+      if (existsSync(commandPath)) {
         return {
           success: true,
-          message: '/remember command is already installed'
+          message: '/remember command already exists in project'
         };
       }
 
-      // Add /remember command
-      const scriptPath = this.getRememberScriptPath();
-      settings.slashCommands.remember = {
-        command: `node "${scriptPath}"`,
-        description: 'Search previous conversations using natural language',
-        timeout: 30
-      };
+      // Copy the command file from the template
+      const templatePath = join(process.cwd(), '.claude', 'commands', 'remember.md');
 
-      // Write settings back
-      await writeFile(this.settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      // Check if running from within the claude-conversation-extractor project
+      const sourceCommandPath = existsSync(templatePath) ? templatePath : null;
 
+      if (!sourceCommandPath) {
+        return {
+          success: false,
+          message: 'Could not find remember.md template. Run from claude-conversation-extractor directory.'
+        };
+      }
+
+      // Command file is already in place if we're in the project directory
       return {
         success: true,
-        message: '/remember command installed successfully! Restart Claude Code for changes to take effect.'
+        message: '/remember command is available (markdown-based, auto-discovered by Claude Code)'
       };
     } catch (error) {
       return {
@@ -126,43 +106,27 @@ export class CommandManager {
   }
 
   /**
-   * Uninstall the /remember command
+   * Uninstall the /remember command (removes markdown file)
    * @returns {Promise<{success: boolean, message: string}>}
    */
   async uninstallRememberCommand() {
     try {
-      if (!existsSync(this.settingsPath)) {
-        return {
-          success: true,
-          message: 'Command is not installed (no settings file found)'
-        };
-      }
+      const { unlink } = await import('fs/promises');
+      const commandPath = join(process.cwd(), '.claude', 'commands', 'remember.md');
 
-      const settingsData = await readFile(this.settingsPath, 'utf-8');
-      const settings = JSON.parse(settingsData);
-
-      // Check if slashCommands exist
-      if (!settings.slashCommands || !settings.slashCommands.remember) {
+      if (!existsSync(commandPath)) {
         return {
           success: true,
           message: 'Command is not installed'
         };
       }
 
-      // Remove /remember command
-      delete settings.slashCommands.remember;
-
-      // Clean up empty slashCommands object
-      if (Object.keys(settings.slashCommands).length === 0) {
-        delete settings.slashCommands;
-      }
-
-      // Write settings back
-      await writeFile(this.settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      // Remove the command file
+      await unlink(commandPath);
 
       return {
         success: true,
-        message: '/remember command uninstalled successfully! Restart Claude Code for changes to take effect.'
+        message: '/remember command removed successfully!'
       };
     } catch (error) {
       return {
@@ -174,16 +138,16 @@ export class CommandManager {
 
   /**
    * Get command status information
-   * @returns {Promise<{installed: boolean, scriptPath: string}>}
+   * @returns {Promise<{installed: boolean, commandPath: string}>}
    */
   async getCommandStatus() {
     const installed = await this.isRememberCommandInstalled();
-    const scriptPath = this.getRememberScriptPath();
+    const commandPath = this.getRememberCommandPath();
 
     return {
       installed,
-      scriptPath,
-      settingsPath: this.settingsPath
+      commandPath,
+      commandType: 'markdown (auto-discovered)'
     };
   }
 }
