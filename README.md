@@ -2,7 +2,7 @@
 
 > 🚀 **Search, browse, and export your entire Claude Code conversation history with lightning-fast full-text search**
 
-[![npm version](https://img.shields.io/npm/v/claude-conversation-extractor.svg)](https://www.npmjs.com/package/claude-conversation-extractor)
+[![GitHub release](https://img.shields.io/github/v/release/NathanNorman/claude-conversation-extractor)](https://github.com/NathanNorman/claude-conversation-extractor/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
 [![Tests](https://img.shields.io/badge/tests-340%20passing-success)](tests/)
@@ -45,17 +45,7 @@ An advanced Node.js tool for searching, browsing, and exporting Claude Code conv
 
 ## 📦 Installation
 
-### NPM (Recommended)
-
-```bash
-# Install globally
-npm install -g claude-conversation-extractor
-
-# Or run directly with npx (no installation)
-npx claude-conversation-extractor
-```
-
-### From Source
+### Install from GitHub (Recommended)
 
 ```bash
 # Clone the repository
@@ -70,6 +60,18 @@ npm start
 
 # Or use the CLI directly
 node src/cli.js
+```
+
+**Note:** This package is not published to npm. Install directly from GitHub as shown above.
+
+### Link for Global Usage (Optional)
+
+```bash
+# From the project directory, create a global link
+npm link
+
+# Now you can run from anywhere:
+claude-logs
 ```
 
 ---
