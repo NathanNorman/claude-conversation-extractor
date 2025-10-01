@@ -127,6 +127,10 @@ TEST_TIMING_REPORT.md
 
 # Build artifacts
 *.tgz
+dist/
 
-# Scripts directory (development utilities only)
-scripts/
+# TypeScript build artifacts
+*.d.ts
+
+# Repomix output
+repomix-source.txt
