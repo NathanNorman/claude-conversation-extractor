@@ -1,5 +1,6 @@
 /**
- * Tests for CommandManager - /remember Slash Command Installation
+ * Tests for CommandManager - /remember Markdown Slash Command
+ * Updated for Claude Code v1.0+ markdown-based slash commands
  */
 
 import { jest } from '@jest/globals';
@@ -8,129 +9,147 @@ import path from 'path';
 import { CommandManager } from '../../src/setup/command-manager.js';
 import { createTestEnv } from '../utils/test-helpers.js';
 
-describe('CommandManager', () => {
+describe('CommandManager (Markdown-Based)', () => {
   let testEnv;
   let commandManager;
-  let mockSettingsPath;
+  let commandsDir;
+  let originalCwd;
 
   beforeEach(async () => {
     testEnv = await createTestEnv();
-    mockSettingsPath = path.join(testEnv.tempDir, 'settings.json');
-    commandManager = new CommandManager({ settingsPath: mockSettingsPath });
+    commandsDir = path.join(testEnv.tempDir, '.claude', 'commands');
+    commandManager = new CommandManager({ commandsDir });
+
+    // Save and change to test directory
+    originalCwd = process.cwd();
+    process.chdir(testEnv.tempDir);
   });
 
   afterEach(async () => {
+    // Restore working directory first
+    process.chdir(originalCwd);
     await testEnv.cleanup();
   });
 
-  describe('/remember Command Installation', () => {
-    test('should install /remember command to settings.json', async () => {
-      const result = await commandManager.installRememberCommand();
+  describe('/remember Command Detection', () => {
+    test('should detect when remember.md exists in project', async () => {
+      // Create .claude/commands directory in project
+      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
+      await fs.ensureDir(projectCommandsDir);
+      await fs.writeFile(
+        path.join(projectCommandsDir, 'remember.md'),
+        '# Test command'
+      );
 
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('installed successfully');
-
-      // Verify settings file was created
-      expect(fs.existsSync(mockSettingsPath)).toBe(true);
-
-      // Verify command is in settings
-      const settings = await fs.readJson(mockSettingsPath);
-      expect(settings.slashCommands).toBeDefined();
-      expect(settings.slashCommands.remember).toBeDefined();
-      expect(settings.slashCommands.remember.command).toContain('remember.js');
-      expect(settings.slashCommands.remember.description).toBeDefined();
-      expect(settings.slashCommands.remember.timeout).toBe(30);
+      const installed = await commandManager.isRememberCommandInstalled();
+      expect(installed).toBe(true);
     });
 
-    test('should not duplicate command if already installed', async () => {
-      await commandManager.installRememberCommand();
-      const result = await commandManager.installRememberCommand();
+    test('should detect when remember.md exists in global commands', async () => {
+      // Create command in global directory
+      await fs.ensureDir(commandsDir);
+      await fs.writeFile(
+        path.join(commandsDir, 'remember.md'),
+        '# Test command'
+      );
 
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('already installed');
+      const installed = await commandManager.isRememberCommandInstalled();
+      expect(installed).toBe(true);
     });
 
-    test('should use absolute path for global install', async () => {
-      await commandManager.installRememberCommand();
-      const scriptPath = commandManager.getRememberScriptPath();
-
-      expect(scriptPath).toContain('/node_modules/claude-conversation-extractor/');
-      expect(scriptPath).toContain('remember.js');
+    test('should return false when remember.md does not exist', async () => {
+      const installed = await commandManager.isRememberCommandInstalled();
+      expect(installed).toBe(false);
     });
   });
 
-  describe('/remember Command Uninstallation', () => {
-    test('should remove command from settings.json', async () => {
-      await commandManager.installRememberCommand();
+  describe('Command Installation', () => {
+    test('should report success if remember.md already exists in project', async () => {
+      // Pre-create the command file
+      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
+      await fs.ensureDir(projectCommandsDir);
+      await fs.writeFile(
+        path.join(projectCommandsDir, 'remember.md'),
+        '# Existing command'
+      );
+
+      const result = await commandManager.installRememberCommand();
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('already exists');
+    });
+
+    test('should verify remember.md exists when running from claude-conversation-extractor', async () => {
+      // Create the command file to simulate being in the project
+      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
+      await fs.ensureDir(projectCommandsDir);
+      await fs.writeFile(
+        path.join(projectCommandsDir, 'remember.md'),
+        '---\nallowed-tools: Bash\n---\n# Remember command'
+      );
+
+      const result = await commandManager.installRememberCommand();
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('Command Uninstallation', () => {
+    test('should remove remember.md from project', async () => {
+      // Create command file first
+      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
+      await fs.ensureDir(projectCommandsDir);
+      const commandPath = path.join(projectCommandsDir, 'remember.md');
+      await fs.writeFile(commandPath, '# Test command');
+
+      // Verify it exists
+      expect(fs.existsSync(commandPath)).toBe(true);
+
+      // Uninstall
       const result = await commandManager.uninstallRememberCommand();
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('uninstalled successfully');
-
-      // Verify command is removed
-      const settings = await fs.readJson(mockSettingsPath);
-      expect(settings.slashCommands?.remember).toBeUndefined();
+      expect(result.message).toContain('removed successfully');
+      expect(fs.existsSync(commandPath)).toBe(false);
     });
 
-    test('should handle uninstall when not installed', async () => {
+    test('should handle uninstalling when command does not exist', async () => {
       const result = await commandManager.uninstallRememberCommand();
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('not installed');
     });
-
-    test('should clean up empty slashCommands object', async () => {
-      await commandManager.installRememberCommand();
-      await commandManager.uninstallRememberCommand();
-
-      const settings = await fs.readJson(mockSettingsPath);
-      expect(settings.slashCommands).toBeUndefined();
-    });
   });
 
   describe('Command Status', () => {
-    test('should detect command installation status', async () => {
-      let status = await commandManager.getCommandStatus();
-      expect(status.installed).toBe(false);
-
-      await commandManager.installRememberCommand();
-
-      status = await commandManager.getCommandStatus();
-      expect(status.installed).toBe(true);
-    });
-
-    test('should return command configuration', async () => {
-      await commandManager.installRememberCommand();
+    test('should return correct status and command path', async () => {
       const status = await commandManager.getCommandStatus();
 
-      expect(status.scriptPath).toBeDefined();
-      expect(status.settingsPath).toBe(mockSettingsPath);
-    });
-  });
-
-  describe('Settings.json Management', () => {
-    test('should create settings.json if it does not exist', async () => {
-      expect(fs.existsSync(mockSettingsPath)).toBe(false);
-
-      await commandManager.installRememberCommand();
-
-      expect(fs.existsSync(mockSettingsPath)).toBe(true);
+      expect(status).toHaveProperty('installed');
+      expect(status).toHaveProperty('commandPath');
+      expect(status).toHaveProperty('commandType');
+      expect(status.commandType).toBe('markdown (auto-discovered)');
     });
 
-    test('should preserve existing settings when installing', async () => {
-      await fs.writeJson(mockSettingsPath, {
-        someOtherSetting: 'value',
-        slashCommands: {
-          existingCommand: { command: 'echo test', description: 'test' }
-        }
-      });
+    test('should return installed: true when remember.md exists', async () => {
+      // Create command
+      const projectCommandsDir = path.join(process.cwd(), '.claude', 'commands');
+      await fs.ensureDir(projectCommandsDir);
+      await fs.writeFile(
+        path.join(projectCommandsDir, 'remember.md'),
+        '# Test'
+      );
 
-      await commandManager.installRememberCommand();
+      const status = await commandManager.getCommandStatus();
 
-      const settings = await fs.readJson(mockSettingsPath);
-      expect(settings.someOtherSetting).toBe('value');
-      expect(settings.slashCommands.existingCommand).toBeDefined();
-      expect(settings.slashCommands.remember).toBeDefined();
+      expect(status.installed).toBe(true);
+      expect(status.commandPath).toContain('remember.md');
+    });
+
+    test('should return installed: false when remember.md does not exist', async () => {
+      const status = await commandManager.getCommandStatus();
+
+      expect(status.installed).toBe(false);
     });
   });
 });

@@ -237,10 +237,16 @@ Test ${i}
   });
 
   describe('getDisplayName()', () => {
-    test('should clean project names', () => {
-      expect(miniSearch.getDisplayName('-Users-nathan-norman-toast-analytics')).toBe('toast-analytics');
-      expect(miniSearch.getDisplayName('-Users-nathan-norman-mcp-funnel')).toBe('mcp-funnel');
-      expect(miniSearch.getDisplayName('-Users-nathan-norman')).toBe('~ (home)');
+    test('should clean project names with any username (generic pattern)', () => {
+      // Works for any username, not just hardcoded ones
+      expect(miniSearch.getDisplayName('-Users-alice-my-project')).toBe('my-project');
+      expect(miniSearch.getDisplayName('-Users-bob-api-server')).toBe('api-server');
+      expect(miniSearch.getDisplayName('Users-charlie-web-app')).toBe('web-app');
+    });
+
+    test('should handle home directory for any user', () => {
+      expect(miniSearch.getDisplayName('-Users-alice')).toBe('~ (home)');
+      expect(miniSearch.getDisplayName('Users-bob')).toBe('~ (home)');
     });
 
     test('should handle edge cases', () => {
