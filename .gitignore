@@ -99,3 +99,34 @@ claude_ui/
 # Node.js dependencies
 node_modules/
 .claude-work/
+
+# Test coverage
+coverage/
+
+# Temporary work files
+debug-*.js
+test-*.js
+check-*.js
+force-*.js
+rebuild-*.js
+direct-*.js
+
+# Generated context files
+claude-context-*.md
+launch-context-*.sh
+
+# Planning and task files
+TODO.md
+ACTUAL_REMAINING_WORK.md
+SEARCH_HIGHLIGHTING_ISSUE.md
+TASK_*.md
+TESTING_*.md
+IMPLEMENTATION_PLAN.md
+test_improvements.md
+TEST_TIMING_REPORT.md
+
+# Build artifacts
+*.tgz
+
+# Scripts directory (development utilities only)
+scripts/
