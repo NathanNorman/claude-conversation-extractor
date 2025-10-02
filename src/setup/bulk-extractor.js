@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, access, stat, unlink } from 'fs/promises';
+import { readFile, writeFile, mkdir, access, stat, unlink, utimes } from 'fs/promises';
 import { join } from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -381,16 +381,10 @@ class BulkExtractor {
     const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
     const fileName = `${projectName}_${sessionId}_${timestamp}${extension}`;
     const filePath = join(exportDir, fileName);
-    
-    // Check if file already exists (skip if duplicate)
-    try {
-      await access(filePath);
-      // File already exists, skip
-      return { skipped: true, path: filePath };
-    } catch {
-      // File doesn't exist, continue with export
-    }
-    
+
+    // Note: File existence is checked by caller (extractAllConversations)
+    // If we're here, caller has determined this file needs to be exported/updated
+
     // Format content based on specified format
     const conversationData = {
       project: conversation.project,
@@ -402,9 +396,13 @@ class BulkExtractor {
     
     // Write the file
     await writeFile(filePath, formattedContent);
-    
-    return { 
-      exported: true, 
+
+    // Set file mtime to match source conversation to prevent race conditions
+    // This ensures exports are marked with the JSONL's timestamp, not "now"
+    await utimes(filePath, new Date(), conversation.modified);
+
+    return {
+      exported: true,
       path: filePath,
       messageCount: messages.length
     };

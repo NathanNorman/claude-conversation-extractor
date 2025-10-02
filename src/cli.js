@@ -2417,8 +2417,8 @@ async function main() {
       // Build search index
       if (status.needsIndexing) {
         const indexBuilder = new IndexBuilder();
-        await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
-        await setupManager.markIndexComplete(status.conversations.length);
+        const indexResult = await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
+        await setupManager.markIndexComplete(indexResult.documentCount);
       }
         
       await setupManager.markSetupComplete();
@@ -2442,8 +2442,8 @@ async function main() {
         
     case 'index_only':
       const indexBuilder = new IndexBuilder();
-      await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
-      await setupManager.markIndexComplete(status.conversations.length);
+      const indexResult = await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
+      await setupManager.markIndexComplete(indexResult.documentCount);
       // Load MiniSearch index
       const miniSearchIdx = new MiniSearchEngine();
       const indexLoaded = await miniSearchIdx.loadIndex();
