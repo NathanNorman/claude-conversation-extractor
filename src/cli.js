@@ -2366,7 +2366,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
 
     // For choices that need to be handled by main()'s switch statement, exit the loop
     // These are setup-related operations that change system state
-    const mainHandledChoices = ['extract_only', 'index_only', 'change_location', 'view_analytics'];
+    const mainHandledChoices = ['extract_only', 'index_only', 'change_location', 'view_analytics', 'view_achievements'];
     if (mainHandledChoices.includes(choice)) {
       return choice;
     }
@@ -2454,7 +2454,10 @@ async function main() {
         
     case 'change_location':
       const newLocation = await confirmExportLocation();
-      await setupManager.updateExportLocation(newLocation);
+      // Only update if user didn't cancel
+      if (newLocation) {
+        await setupManager.updateExportLocation(newLocation);
+      }
       // Re-run main to show updated menu
       return main();
 
@@ -2468,6 +2471,13 @@ async function main() {
       await showAnalytics(status);
       // Re-run main to return to menu
       return main();
+
+    case 'view_achievements':
+      {
+        const { showAchievements } = await import('./setup/setup-menu.js');
+        await showAchievements(status);
+        return main();
+      }
 
     case 'skip_setup':
       // User chose to start searching - load the existing index
