@@ -1815,11 +1815,15 @@ async function createClaudeContext(conversation) {
 
     if (foundProjectDirName) {
       // Convert directory name back to actual path
-      // -Users-nathan-norman-toast-analytics → /Users/nathan.norman/toast-analytics
-      if (foundProjectDirName.startsWith('-Users-nathan-norman-')) {
-        const relativePath = foundProjectDirName.substring('-Users-nathan-norman-'.length);
-        projectDir = join(homedir(), relativePath);
-      } else if (foundProjectDirName === '-Users-nathan-norman') {
+      // Pattern: -Users-username-surname-project → /Users/username.surname/project
+      const userMatch = foundProjectDirName.match(/^-?Users-([^-]+)-([^-]+)-(.+)$/);
+      if (userMatch) {
+        const username = userMatch[1];
+        const surname = userMatch[2];
+        const project = userMatch[3];
+        projectDir = join('/Users', `${username}.${surname}`, project);
+      } else if (foundProjectDirName.match(/^-?Users-[^-]+-[^-]+$/)) {
+        // Just -Users-username-surname = home directory
         projectDir = homedir();
       } else {
         projectDir = foundProjectDirName.replace(/^-/, '/');

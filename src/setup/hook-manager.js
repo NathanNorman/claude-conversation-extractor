@@ -70,7 +70,7 @@ export class HookManager {
   getHookCommand() {
     // Use absolute path to globally installed package
     // This ensures the hook works from any project, not just claude-conversation-extractor
-    // Default to /opt/homebrew (common on macOS) or /usr/local
+
     const globalPaths = [
       '/opt/homebrew/lib/node_modules/claude-conversation-extractor/.claude/hooks/auto-export-conversation.js',
       '/usr/local/lib/node_modules/claude-conversation-extractor/.claude/hooks/auto-export-conversation.js',
@@ -78,8 +78,17 @@ export class HookManager {
       '$CLAUDE_PROJECT_DIR/.claude/hooks/auto-export-conversation.js'
     ];
 
-    // For now, use the most common path on macOS
-    // TODO: Make this dynamic by checking which path exists
+    // Find first path that exists
+    for (const path of globalPaths) {
+      if (path.startsWith('$')) {
+        return `node "${path}"`; // Return env var path as-is
+      }
+      if (existsSync(path)) {
+        return `node "${path}"`;
+      }
+    }
+
+    // Default to first path if none exist (will error at runtime, which is fine)
     return `node "${globalPaths[0]}"`;
   }
 

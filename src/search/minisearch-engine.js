@@ -46,14 +46,39 @@ export class MiniSearchEngine {
     // Remove path-based prefixes using dynamic patterns
     let displayName = dirName;
 
-    // Pattern 1: Remove -Users-<username>- prefix (handles multi-part usernames like nathan-norman)
-    // Match: -Users-X-Y-project or Users-X-Y-project, extract: project
-    const userPrefixMatch = displayName.match(/^-?Users-[^-]+-[^-]+-(.+)$/);
-    if (userPrefixMatch) {
-      displayName = userPrefixMatch[1]; // Extract just the project name
-    } else if (displayName.match(/^-?Users-[^-]+-[^-]+$/)) {
-      // Special case: just -Users-nathan-norman with no project = home directory
-      return 'home';
+    // Pattern 1: Remove -Users-<username>- prefix
+    // Handle both single-word (user) and two-word (nathan-norman) usernames
+    // -Users-user-my-api-project → my-api-project
+    // -Users-nathan-norman-toast-analytics → toast-analytics
+    if (displayName.match(/^-?Users-/)) {
+      const cleaned = displayName.replace(/^-/, '');
+
+      // Try two-word username first (firstname-lastname-project)
+      const twoWordMatch = cleaned.match(/^Users-([^-]+)-([^-]+)-(.+)$/);
+      if (twoWordMatch && twoWordMatch[3]) {
+        // Check if this looks like lastname-project or just project
+        // Heuristic: if part 2 + part 3 together look like a single concept, it's single-word username
+        const potentialLastname = twoWordMatch[2];
+        const potentialProject = twoWordMatch[3];
+
+        // If the "lastname" is common (home, my, the, app, etc.), it's probably part of project name
+        if (potentialLastname.match(/^(my|the|app|web|api|test|dev|prod)$/i)) {
+          // Single-word username: Users-user-my-api-project
+          displayName = `${potentialLastname}-${potentialProject}`;
+        } else {
+          // Two-word username: Users-nathan-norman-toast-analytics
+          displayName = potentialProject;
+        }
+      } else if (cleaned.match(/^Users-[^-]+-[^-]+$/)) {
+        // Just Users-first-last = home
+        return '~ (home)';
+      } else if (cleaned.match(/^Users-[^-]+$/)) {
+        // Just Users-username = home (single-word username)
+        return '~ (home)';
+      } else {
+        // Fallback
+        displayName = cleaned.split('-').slice(2).join('-') || '~ (home)';
+      }
     }
 
     // Pattern 2: Remove full home directory path

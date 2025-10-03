@@ -55,10 +55,11 @@ describe('Smoke Tests - Actual CLI Execution', () => {
       }
     });
 
-    // Give it 2 seconds to start and display initial screen
+    // Give it 5 seconds to start and display initial screen
+    // (getSetupStatus now reads index file which can be slow)
     setTimeout(() => {
       cli.kill('SIGTERM');
-    }, 2000);
+    }, 5000);
 
     cli.on('exit', (code) => {
       // Check for common crash indicators
@@ -72,7 +73,7 @@ describe('Smoke Tests - Actual CLI Execution', () => {
       expect(output.length).toBeGreaterThan(0);
       done();
     });
-  }, 5000);
+  }, 15000); // Increased timeout for status check that reads index file
 
   it('should handle search input without crashing', (done) => {
     const cli = spawn('node', ['src/cli.js'], {

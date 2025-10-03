@@ -382,13 +382,21 @@ class SetupManager {
     const indexExists = await this.checkIndexFile();
 
     // Read actual conversation count from index file (more accurate than config)
+    // Use cached value if index file hasn't changed
     let actualIndexedCount = config.conversationsIndexed || 0;
     if (indexExists) {
       try {
-        const indexData = await readFile(join(this.exportDir, 'search-index-v2.json'), 'utf-8');
-        const indexJson = JSON.parse(indexData);
-        if (indexJson.stats && indexJson.stats.totalConversations) {
-          actualIndexedCount = indexJson.stats.totalConversations;
+        const indexPath = join(this.exportDir, 'search-index-v2.json');
+        const indexStat = await stat(indexPath);
+
+        // Only re-read if index was modified after config was last updated
+        const configModified = config.indexLastBuilt ? new Date(config.indexLastBuilt) : new Date(0);
+        if (indexStat.mtime > configModified) {
+          const indexData = await readFile(indexPath, 'utf-8');
+          const indexJson = JSON.parse(indexData);
+          if (indexJson.stats && indexJson.stats.totalConversations) {
+            actualIndexedCount = indexJson.stats.totalConversations;
+          }
         }
       } catch (error) {
         // Fall back to config value if index can't be read
