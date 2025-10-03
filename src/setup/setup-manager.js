@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { HookManager } from './hook-manager.js';
 import { CommandManager } from './command-manager.js';
+import { BackgroundServiceManager } from './background-service-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -379,6 +380,20 @@ class SetupManager {
     const conversations = await this.findAllConversations();
     const exportedFiles = await this.scanExportDirectory();
     const indexExists = await this.checkIndexFile();
+
+    // Read actual conversation count from index file (more accurate than config)
+    let actualIndexedCount = config.conversationsIndexed || 0;
+    if (indexExists) {
+      try {
+        const indexData = await readFile(join(this.exportDir, 'search-index-v2.json'), 'utf-8');
+        const indexJson = JSON.parse(indexData);
+        if (indexJson.stats && indexJson.stats.totalConversations) {
+          actualIndexedCount = indexJson.stats.totalConversations;
+        }
+      } catch (error) {
+        // Fall back to config value if index can't be read
+      }
+    }
     
     // Check which conversations are actually extracted
     // Map by session ID (new format) or project name (old format for backward compatibility)
@@ -386,10 +401,18 @@ class SetupManager {
     const extractedByProject = new Map();
 
     for (const file of exportedFiles) {
-      // Try new format first: projectname_sessionid_YYYY-MM-DD.ext
-      const newFormatMatch = file.name.match(/^(.+?)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_\d{4}-\d{2}-\d{2}\.(md|json|html)$/i);
-      if (newFormatMatch) {
-        const sessionId = newFormatMatch[2];
+      // Try dateless format first (newest): projectname_sessionid.ext
+      const datelessMatch = file.name.match(/^(.+?)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(md|json|html)$/i);
+      if (datelessMatch) {
+        const sessionId = datelessMatch[2];
+        extractedBySessionId.set(sessionId, file);
+        continue;
+      }
+
+      // Try dated format: projectname_sessionid_YYYY-MM-DD.ext
+      const datedFormatMatch = file.name.match(/^(.+?)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_\d{4}-\d{2}-\d{2}\.(md|json|html)$/i);
+      if (datedFormatMatch) {
+        const sessionId = datedFormatMatch[2];
         extractedBySessionId.set(sessionId, file);
         continue;
       }
@@ -447,6 +470,10 @@ class SetupManager {
     const commandManager = new CommandManager();
     const commandStatus = await commandManager.getCommandStatus();
 
+    // Check background service status
+    const serviceManager = new BackgroundServiceManager();
+    const serviceStatus = await serviceManager.getServiceStatus();
+
     return {
       isFirstTime: !config.setupComplete && exportedFiles.length === 0,
       needsSetup: !allExtracted || !indexReady,
@@ -464,10 +491,15 @@ class SetupManager {
       conversations,
       needsExtractionList: needsExtraction,
       exportedFiles,
-      config,
+      config: {
+        ...config,
+        conversationsIndexed: actualIndexedCount // Use actual count from index, not stale config
+      },
       hookInstalled: hookStatus.installed,
       hookScriptExists: hookStatus.scriptExists,
-      rememberCommandInstalled: commandStatus.installed
+      rememberCommandInstalled: commandStatus.installed,
+      backgroundServiceInstalled: serviceStatus.installed,
+      backgroundServiceRunning: serviceStatus.running
     };
   }
 

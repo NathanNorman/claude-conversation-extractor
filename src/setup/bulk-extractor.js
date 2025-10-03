@@ -68,12 +68,10 @@ class BulkExtractor {
         
         if (alreadyExtracted) {
           // Check if the extracted file is up to date
-          const timestamp = conversation.modified
-            ? new Date(conversation.modified).toISOString().split('T')[0]
-            : new Date().toISOString().split('T')[0];
-          const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+          let projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+          projectName = projectName.replace(/^-?Users-[^-]+-[^-]+-/, '').replace(/^-/, '') || 'home';
           const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
-          const fileName = `${projectName}_${sessionId}_${timestamp}.md`;
+          const fileName = `${projectName}_${sessionId}.md`;
           const filePath = join(exportDir, fileName);
           
           const fileStat = await stat(filePath);
@@ -370,17 +368,20 @@ class BulkExtractor {
     }
     
     // Generate filename based on format
-    const timestamp = conversation.modified
-      ? new Date(conversation.modified).toISOString().split('T')[0]
-      : new Date().toISOString().split('T')[0];
-    const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+    let projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+    projectName = projectName.replace(/^-?Users-[^-]+-[^-]+-/, '').replace(/^-/, '') || 'home';
     const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
 
     // Get file extension based on format
     const format = this.currentFormat || 'markdown';
     const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
-    const fileName = `${projectName}_${sessionId}_${timestamp}${extension}`;
+    const fileName = `${projectName}_${sessionId}${extension}`;
     const filePath = join(exportDir, fileName);
+
+    // Keep timestamp for the Date field inside the file
+    const timestamp = conversation.modified
+      ? new Date(conversation.modified).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
 
     // Note: File existence is checked by caller (extractAllConversations)
     // If we're here, caller has determined this file needs to be exported/updated
@@ -468,16 +469,14 @@ class BulkExtractor {
   }
 
   async checkIfAlreadyExtracted(conversation, exportDir) {
-    const timestamp = conversation.modified
-      ? new Date(conversation.modified).toISOString().split('T')[0]
-      : new Date().toISOString().split('T')[0];
-    const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+    let projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+    projectName = projectName.replace(/^-?Users-[^-]+-[^-]+-/, '').replace(/^-/, '') || 'home';
     const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
 
     // Check for the specific format we're currently extracting
     const format = this.currentFormat || 'markdown';
     const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
-    const fileName = `${projectName}_${sessionId}_${timestamp}${extension}`;
+    const fileName = `${projectName}_${sessionId}${extension}`;
     const filePath = join(exportDir, fileName);
 
     try {

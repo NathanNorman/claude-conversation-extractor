@@ -46,10 +46,14 @@ export class MiniSearchEngine {
     // Remove path-based prefixes using dynamic patterns
     let displayName = dirName;
 
-    // Pattern 1: Remove -Users-<username>- prefix (most common)
-    const userPrefixMatch = displayName.match(/^-?Users-([^-]+)-(.+)$/);
+    // Pattern 1: Remove -Users-<username>- prefix (handles multi-part usernames like nathan-norman)
+    // Match: -Users-X-Y-project or Users-X-Y-project, extract: project
+    const userPrefixMatch = displayName.match(/^-?Users-[^-]+-[^-]+-(.+)$/);
     if (userPrefixMatch) {
-      displayName = userPrefixMatch[2]; // Extract just the project name
+      displayName = userPrefixMatch[1]; // Extract just the project name
+    } else if (displayName.match(/^-?Users-[^-]+-[^-]+$/)) {
+      // Special case: just -Users-nathan-norman with no project = home directory
+      return 'home';
     }
 
     // Pattern 2: Remove full home directory path

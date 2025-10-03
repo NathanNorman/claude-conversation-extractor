@@ -2222,7 +2222,151 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
       return choice;
     }
 
-    // Handle hook operations - they need to return to menu
+    // Handle background service operations
+    if (choice === 'install_background_service' || choice === 'manage_background_service') {
+      const { BackgroundServiceManager } = await import('./setup/background-service-manager.js');
+      const serviceManager = new BackgroundServiceManager();
+
+      // Clear screen and show explanation
+      console.clear();
+      console.log('\n' + colors.info('📋 Background Export Service'));
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.primary('\nWhat does it do?'));
+      console.log('  Automatically exports active conversations to markdown');
+      console.log('  every 60 seconds (only processes changed files).');
+      console.log(colors.primary('\nHow does it work?'));
+      console.log('  • Runs in background via macOS launchd service');
+      console.log('  • Checks for conversations modified in last 2 minutes');
+      console.log('  • Incrementally updates search index');
+      console.log('  • Skips conversations already exported');
+      console.log(colors.primary('\nPerformance:'));
+      console.log('  • No active conversations: ~50-100ms (just checks files)');
+      console.log('  • 1-2 active conversations: ~300-500ms per run');
+      console.log('  • Memory usage: ~2.5MB');
+      console.log(colors.primary('\nLogs:'));
+      console.log('  • Timing: ~/.claude/claude_conversations/logs/background-export-timing.log');
+      console.log('  • Stats: ~/.claude/claude_conversations/logs/background-export-stats.log');
+      console.log(colors.dim('\n' + '━'.repeat(60)));
+
+      // Get current status
+      const serviceStatus = await serviceManager.getServiceStatus();
+
+      if (choice === 'manage_background_service' && serviceStatus.installed) {
+        // Show management menu
+        console.log('\n' + colors.info('⚙️  Service Status:'));
+        console.log(`  Installed: ${colors.success('✅')}`);
+        console.log(`  Running: ${serviceStatus.running ? colors.success('✅') : colors.error('❌')}`);
+
+        // Get recent stats
+        const recentStats = await serviceManager.getRecentStats();
+        if (recentStats.stats) {
+          const s = recentStats.stats;
+          console.log('\n' + colors.info('📊 Last Run:'));
+          console.log(`  Time: ${s.lastRun || 'N/A'}`);
+          console.log(`  Duration: ${s.totalTime || 'N/A'}`);
+          console.log(`  Active files: ${s.activeFiles}`);
+          console.log(`  Exported: ${s.exported}, Skipped: ${s.skipped}, Errors: ${s.errors}`);
+        }
+
+        const { manageAction } = await inquirer.prompt([{
+          type: 'list',
+          name: 'manageAction',
+          message: 'What would you like to do?',
+          choices: [
+            { name: '📊 View detailed logs', value: 'view_logs' },
+            { name: '♻️  Reinstall service', value: 'reinstall' },
+            { name: '🗑️  Uninstall service', value: 'uninstall' },
+            { name: '⬅️  Back to menu', value: 'back' }
+          ]
+        }]);
+
+        if (manageAction === 'back') {
+          console.clear();
+          continue;
+        }
+
+        if (manageAction === 'view_logs') {
+          console.log('\n' + colors.info('📋 Log Files:'));
+          console.log(`  Timing: ${serviceStatus.logPaths.timing}`);
+          console.log(`  Stats: ${serviceStatus.logPaths.stats}`);
+          console.log(`  Stdout: ${serviceStatus.logPaths.stdout}`);
+          console.log(`  Stderr: ${serviceStatus.logPaths.stderr}`);
+          console.log('\n' + colors.dim('View with: tail -f <path>'));
+          console.log(colors.dim('Press Enter to continue...'));
+          await inquirer.prompt([{ type: 'input', name: 'continue', message: '' }]);
+          console.clear();
+          continue;
+        }
+
+        if (manageAction === 'reinstall') {
+          const spinner = ora('Reinstalling background export service...').start();
+          await serviceManager.uninstallService();
+          const result = await serviceManager.installService();
+          if (result.success) {
+            spinner.succeed(colors.success(result.message));
+          } else {
+            spinner.fail(colors.error(result.message));
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          currentStatus = await setupManager.getSetupStatus();
+          console.clear();
+          continue;
+        }
+
+        if (manageAction === 'uninstall') {
+          const { confirmUninstall } = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'confirmUninstall',
+            message: 'Are you sure you want to uninstall the background export service?',
+            default: false
+          }]);
+
+          if (!confirmUninstall) {
+            console.clear();
+            continue;
+          }
+
+          const spinner = ora('Uninstalling background export service...').start();
+          const result = await serviceManager.uninstallService();
+          if (result.success) {
+            spinner.succeed(colors.success(result.message));
+          } else {
+            spinner.fail(colors.error(result.message));
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          currentStatus = await setupManager.getSetupStatus();
+          console.clear();
+          continue;
+        }
+      } else {
+        // Install service
+        const { confirmInstall } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'confirmInstall',
+          message: 'Install background export service?',
+          default: true
+        }]);
+
+        if (!confirmInstall) {
+          console.clear();
+          continue;
+        }
+
+        const spinner = ora('Installing background export service...').start();
+        const result = await serviceManager.installService();
+        if (result.success) {
+          spinner.succeed(colors.success(result.message));
+        } else {
+          spinner.fail(colors.error(result.message));
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        currentStatus = await setupManager.getSetupStatus();
+        console.clear();
+        continue;
+      }
+    }
+
+    // Handle hook operations - they need to return to menu (kept for future use)
     if (choice === 'install_hook') {
       // Clear screen and show explanation
       console.clear();

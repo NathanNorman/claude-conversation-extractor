@@ -75,12 +75,14 @@ export async function showSetupMenu(status) {
   }
   statusLines.push(`  ⚡ Search Index: ${colors.accent(searchIndexStatus)}`);
 
-  // Hook status
-  const hookIcon = status.hookInstalled ? '✅' : '❌';
-  const hookStatus = status.hookInstalled
-    ? colors.success(`${hookIcon} Auto-Export Hook: Installed`)
-    : colors.warning(`${hookIcon} Auto-Export Hook: Not installed`);
-  statusLines.push(`  🔗 ${hookStatus}`);
+  // Background service status
+  const serviceIcon = status.backgroundServiceRunning ? '✅' : status.backgroundServiceInstalled ? '⚠️' : '❌';
+  const serviceStatus = status.backgroundServiceRunning
+    ? colors.success(`${serviceIcon} Background Export: Running (every 60s)`)
+    : status.backgroundServiceInstalled
+      ? colors.warning(`${serviceIcon} Background Export: Installed but not running`)
+      : colors.warning(`${serviceIcon} Background Export: Not installed`);
+  statusLines.push(`  ⚙️  ${serviceStatus}`);
 
   // Slash command status
   const commandIcon = status.rememberCommandInstalled ? '✅' : '❌';
@@ -146,18 +148,18 @@ export async function showSetupMenu(status) {
     }
   );
 
-  // Hook management option
-  if (status.hookInstalled) {
+  // Background service management option
+  if (status.backgroundServiceInstalled) {
     choices.push({
-      name: `🔗 ${colors.warning('Uninstall Auto-Export Hook')} ${colors.dim('(remove SessionEnd hook)')}`,
-      value: 'uninstall_hook',
-      short: 'Uninstall Hook'
+      name: `⚙️  ${colors.warning('Manage Background Export Service')} ${colors.dim('(running every 60s)')}`,
+      value: 'manage_background_service',
+      short: 'Background Service'
     });
   } else {
     choices.push({
-      name: `🔗 ${colors.success('Install Auto-Export Hook')} ${colors.dim('(auto-export on session end)')}`,
-      value: 'install_hook',
-      short: 'Install Hook'
+      name: `⚙️  ${colors.success('Install Background Export Service')} ${colors.dim('(auto-export every minute)')}`,
+      value: 'install_background_service',
+      short: 'Install Background Service'
     });
   }
 
