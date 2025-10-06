@@ -499,16 +499,31 @@ export class MiniSearchEngine {
     
     // Parse query to handle exact phrases and operators
     const { searchQuery, searchOptions, phrases } = this.parseQuery(query);
-    
+
     // Apply additional options
     if (options.limit) {
       searchOptions.limit = options.limit;
     }
-    
-    // Perform search with MiniSearch
+
+    // If query is empty but we have phrases, we need to get all documents for filtering
     let results = [];
     try {
-      results = this.miniSearch.search(searchQuery, searchOptions);
+      if (searchQuery.trim() === '' && phrases.length > 0) {
+        // Searching only for exact phrases - get all documents
+        // Convert all conversationData to result format for filtering
+        results = Array.from(this.conversationData.entries()).map(([id, _conv]) => ({
+          id,
+          score: 1, // Default score since we have no query terms
+          terms: [],
+          match: {}
+        }));
+      } else if (searchQuery.trim() === '') {
+        // Empty query with no phrases - return empty
+        results = [];
+      } else {
+        // Normal search with query terms
+        results = this.miniSearch.search(searchQuery, searchOptions);
+      }
     } catch (err) {
       this.logger.error('Search error:', err.message);
       return {
@@ -637,12 +652,12 @@ export class MiniSearchEngine {
    */
   parseQuery(query) {
     const searchOptions = { ...this.miniSearch.searchOptions };
-    
+
     // Handle exact phrases in quotes
     const phrases = [];
     let modifiedQuery = query.replace(/"([^"]+)"/g, (match, phrase) => {
       phrases.push(phrase);
-      return phrase; // Keep phrase in query but we'll handle it specially
+      return ''; // Remove phrase from query - we'll filter by it instead
     });
     
     // Handle prefix search with asterisk
