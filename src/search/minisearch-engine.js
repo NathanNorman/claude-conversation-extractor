@@ -542,6 +542,21 @@ export class MiniSearchEngine {
         return conv && conv.role === searchOptions.roleFilter;
       });
     }
+
+    // Apply phrase filter - only include results that contain ALL quoted phrases
+    if (phrases.length > 0) {
+      results = results.filter(r => {
+        const conv = this.conversationData.get(r.id);
+        if (!conv) return false;
+
+        const fullText = (conv._fullText || conv.fullText || '').toLowerCase();
+
+        // Check if ALL phrases exist in the text
+        return phrases.every(phrase => {
+          return fullText.includes(phrase.toLowerCase());
+        });
+      });
+    }
     
     // Enrich results with full conversation data
     const enrichedResults = [];
