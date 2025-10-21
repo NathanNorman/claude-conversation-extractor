@@ -74,7 +74,9 @@ const STOPWORDS = new Set([
   'conversation', 'conversations', 'message', 'messages', 'chat', 'response', 'question', 'answer',
   // Claude Code specific meta-words (about the tool, not conversation content)
   'skill', 'skills', 'hook', 'hooks', 'command', 'commands', 'tool', 'tools', 'agent', 'agents',
-  'file', 'files', 'code', 'line', 'lines', 'error', 'errors'
+  'file', 'files', 'code', 'line', 'lines', 'error', 'errors',
+  // Common junk terms
+  'oct', 'www', 'am', 'pm', 'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'nov', 'dec'
 ]);
 
 // Patterns to identify and filter code syntax
@@ -87,8 +89,8 @@ const CODE_PATTERNS = [
   /^https?:\/\//,                  // URLs
   /^[a-f0-9]{8,}$/,                // Hex IDs (likely UUIDs)
   /^[A-Z_][A-Z0-9_]+$/,            // CONSTANT_NAMES (often not meaningful)
-  /^\d+[a-z]$/,                    // Numbers with single letter suffix (34m, 33m, etc - ANSI codes)
-  /^[a-z]\d+$/                     // Single letter with numbers (m34, s12, etc)
+  /^\d+[a-z]+$/,                   // Numbers with letters (34m, 50am, 8gb, 255mb, 10pm)
+  /^[a-z]+\d+[a-z]*$/              // Letters with numbers (m34, s12, gb8, mb255)
 ];
 
 /**
