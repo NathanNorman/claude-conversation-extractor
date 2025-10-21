@@ -5,6 +5,7 @@ import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { setImmediate } from 'timers';
+import { KeywordExtractor } from './keyword-extractor.js';
 
 export class MiniSearchEngine {
   constructor(options = {}) {
@@ -226,7 +227,7 @@ export class MiniSearchEngine {
       fields: ['content', 'project', 'keywords', 'toolsUsed', 'preview'],
       
       // Fields to store and return with results
-      storeFields: ['project', 'modified', 'wordCount', 'messageCount'],
+      storeFields: ['project', 'modified', 'wordCount', 'messageCount', 'keywordList'],
       
       // Search configuration
       searchOptions: {
@@ -503,12 +504,40 @@ export class MiniSearchEngine {
         }
       }
     }
-    
+
+    // Extract keywords from all conversations using TF-IDF
+    if (documents.length > 0) {
+      this.logger.info('Extracting keywords from conversations...');
+
+      // Build keyword extractor corpus
+      const extractor = new KeywordExtractor({ logger: this.logger });
+      const conversations = documents.map(doc => ({ fullText: doc.content }));
+      extractor.buildCorpus(conversations);
+
+      // Extract keywords for each document
+      for (let i = 0; i < documents.length; i++) {
+        const keywords = extractor.extractKeywords(documents[i].content, 10, i);
+
+        // Update document with keywords
+        documents[i].keywords = keywords.map(k => k.term).join(' ');  // For search indexing
+        documents[i].keywordList = keywords;  // Store full keyword objects with scores
+
+        // Update conversationData with keywords
+        const convData = this.conversationData.get(documents[i].id);
+        if (convData) {
+          convData.keywords = keywords;
+          convData.keywordString = documents[i].keywords;
+        }
+      }
+
+      this.logger.info(`Extracted keywords for ${documents.length} conversations`);
+    }
+
     // Add all documents to index
     if (documents.length > 0) {
       this.miniSearch.addAll(documents);
     }
-    
+
     // Update stats
     this.stats.totalDocuments = documents.length;
     this.stats.totalConversations = documents.length;
@@ -1100,9 +1129,9 @@ export class MiniSearchEngine {
       // MiniSearch.loadJSON expects the configuration in the second parameter
       const miniSearchConfig = {
         fields: ['content', 'project', 'keywords', 'toolsUsed', 'preview'],
-        storeFields: ['project', 'modified', 'wordCount', 'messageCount'],
+        storeFields: ['project', 'modified', 'wordCount', 'messageCount', 'keywordList'],
         searchOptions: {
-          boost: { 
+          boost: {
             project: 3,
             keywords: 2,
             content: 1
@@ -1381,27 +1410,69 @@ export class MiniSearchEngine {
       }
     }
 
+    // Extract keywords for new/updated documents
+    const allDocuments = [...newDocuments, ...updatedDocuments];
+    if (allDocuments.length > 0) {
+      this.logger.info('Extracting keywords for new/updated conversations...');
+
+      // For incremental updates, we need to rebuild the corpus with ALL conversations
+      // to maintain accurate TF-IDF scores across the entire corpus
+      const extractor = new KeywordExtractor({ logger: this.logger });
+
+      // Get all conversations including new ones
+      const allConversations = [];
+      for (const conv of this.conversationData.values()) {
+        allConversations.push({ fullText: conv.fullText || conv.content || '' });
+      }
+      // Add new documents to corpus
+      for (const doc of allDocuments) {
+        allConversations.push({ fullText: doc.content });
+      }
+
+      extractor.buildCorpus(allConversations);
+
+      // Extract keywords for new/updated documents
+      // Use the correct index in the corpus (after existing conversations)
+      const startIndex = this.conversationData.size;
+      for (let i = 0; i < allDocuments.length; i++) {
+        const keywords = extractor.extractKeywords(allDocuments[i].content, 10, startIndex + i);
+
+        // Update document with keywords
+        allDocuments[i].keywords = keywords.map(k => k.term).join(' ');
+        allDocuments[i].keywordList = keywords;
+
+        // Update conversationData with keywords
+        const convData = this.conversationData.get(allDocuments[i].id);
+        if (convData) {
+          convData.keywords = keywords;
+          convData.keywordString = allDocuments[i].keywords;
+        }
+      }
+
+      this.logger.info(`Extracted keywords for ${allDocuments.length} new/updated conversations`);
+    }
+
     // Add/update documents in index one at a time to avoid duplicate ID errors
-    let addedCount = 0;
-    let failedCount = 0;
-    for (const doc of [...newDocuments, ...updatedDocuments]) {
+    let _addedCount = 0;
+    let _failedCount = 0;
+    for (const doc of allDocuments) {
       try {
         this.miniSearch.add(doc);
-        addedCount++;
+        _addedCount++;
       } catch (err) {
         // If add fails due to duplicate, try discard + add
         if (err.message && err.message.includes('duplicate ID')) {
           try {
             this.miniSearch.discard(doc.id);
             this.miniSearch.add(doc);
-            addedCount++;
+            _addedCount++;
           } catch (err2) {
             this.logger.error(`Failed to update document ${doc.id}: ${err2.message}`);
-            failedCount++;
+            _failedCount++;
           }
         } else {
           this.logger.error(`Failed to add document ${doc.id}: ${err.message}`);
-          failedCount++;
+          _failedCount++;
         }
       }
     }
