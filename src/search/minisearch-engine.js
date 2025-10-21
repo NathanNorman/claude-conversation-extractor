@@ -518,6 +518,9 @@ export class MiniSearchEngine {
       for (let i = 0; i < documents.length; i++) {
         const keywords = extractor.extractKeywords(documents[i].content, 10, i);
 
+        // NOTE: keywords property dual format:
+        // - documents[i].keywords (string) = for MiniSearch text indexing
+        // - convData.keywords (array) = for filtering/display with scores
         // Update document with keywords
         documents[i].keywords = keywords.map(k => k.term).join(' ');  // For search indexing
         documents[i].keywordList = keywords;  // Store full keyword objects with scores
@@ -838,7 +841,7 @@ export class MiniSearchEngine {
 
         // Check if ANY of the requested keywords match
         const hasKeyword = keywordFilters.some(kw =>
-          convKeywords.some(ck => ck.includes(kw) || kw.includes(ck))
+          convKeywords.some(ck => ck.includes(kw))
         );
 
         // Apply existing filter if present

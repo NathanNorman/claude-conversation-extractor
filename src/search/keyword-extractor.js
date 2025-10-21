@@ -6,6 +6,38 @@
  * words that are frequent in specific documents but rare across the corpus.
  */
 
+/**
+ * PROPERTY NAMING CONVENTION:
+ *
+ * Throughout this codebase, keyword data appears in multiple formats:
+ *
+ * 1. IN MINISEARCH INDEX DOCUMENTS (for search):
+ *    - keywords: string (space-separated terms)
+ *      Example: 'typescript debugging api authentication'
+ *    - keywordList: array of {term, score} objects (stored field)
+ *      Example: [{term: 'typescript', score: 0.95}, ...]
+ *
+ * 2. IN CONVERSATIONDATA MAP (for display/filtering):
+ *    - keywords: array of {term, score} objects
+ *      Example: [{term: 'typescript', score: 0.95}, ...]
+ *    - keywordString: string (space-separated, for backwards compat)
+ *      Example: 'typescript debugging api'
+ *
+ * 3. IN EXPORTED FILES:
+ *    - Markdown: Comma-separated string
+ *    - JSON: Array of {term, score} objects
+ *    - HTML: Array of {term, score} rendered as badges
+ *
+ * WHY TWO FORMATS?
+ * - String format: MiniSearch requires strings for full-text indexing
+ * - Array format: Preserves scores, allows filtering/sorting
+ *
+ * WHEN ACCESSING KEYWORDS:
+ * - Always check format: typeof k === 'string' ? k : k.term
+ * - conversationData.keywords = always array
+ * - MiniSearch document.keywords = always string
+ */
+
 import natural from 'natural';
 
 const { TfIdf, WordTokenizer } = natural;
