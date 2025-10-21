@@ -2788,6 +2788,21 @@ async function main() {
       }
       break;
         
+    case 'force_rebuild_index':
+      console.log(colors.info('\n🔄 Rebuilding search index with improved keyword extraction...\n'));
+      const forceIndexBuilder = new IndexBuilder();
+      const forceResult = await forceIndexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
+      await setupManager.markIndexComplete(forceResult.documentCount);
+      // Reload MiniSearch index
+      const reloadedMiniSearch = new MiniSearchEngine();
+      const reloaded = await reloadedMiniSearch.loadIndex();
+      if (reloaded) {
+        searchInterface = reloadedMiniSearch;
+        console.log(colors.success('\n✅ Index rebuilt with improved keywords!\n'));
+      }
+      // Re-run main to show updated menu
+      return main();
+
     case 'change_location':
       const newLocation = await confirmExportLocation();
       // Only update if user didn't cancel
