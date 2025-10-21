@@ -2130,6 +2130,7 @@ async function runAutomatedSearch(args) {
   const searchTerm = args['--search'] || args['--search-term'];
   const filterRepos = args['--filter-repo'] ? args['--filter-repo'].split(',') : [];
   const filterDate = args['--filter-date'];
+  const filterKeywords = args['--keyword'] || args['--keywords']; // Support --keyword=typescript or --keywords=react,node
   const limit = parseInt(args['--limit'] || '20', 10);
   const outputJson = args['--json'] !== undefined;
 
@@ -2150,20 +2151,21 @@ async function runAutomatedSearch(args) {
     results = searchResult.results || [];
   } else {
     // No search term - return all conversations sorted by date (newest first)
+    // NOTE: Don't slice to limit yet - apply filters first, then limit
     const allConvos = Array.from(engine.conversationData.values())
       .sort((a, b) => {
         const dateA = a.modified ? new Date(a.modified) : new Date(0);
         const dateB = b.modified ? new Date(b.modified) : new Date(0);
         return dateB - dateA; // Descending order (newest first)
       })
-      .slice(0, limit)
       .map(conv => ({
         project: conv.project,
         exportedFile: conv.exportedFile,
         originalPath: conv.originalPath,
         modified: conv.modified,
         preview: conv.preview,
-        fullText: conv.fullText
+        fullText: conv.fullText,
+        keywords: conv.keywords || []  // Include keywords for agents
       }));
     results = allConvos;
   }
@@ -2182,6 +2184,27 @@ async function runAutomatedSearch(args) {
       });
     }
   }
+
+  // Apply keyword filter
+  if (filterKeywords) {
+    const requestedKeywords = filterKeywords.split(',').map(k => k.trim().toLowerCase());
+    results = results.filter(r => {
+      if (!r.keywords || r.keywords.length === 0) return false;
+
+      // Extract keyword terms (handle both string and object formats)
+      const convKeywords = r.keywords.map(k =>
+        (typeof k === 'string' ? k : k.term).toLowerCase()
+      );
+
+      // Check if ANY requested keyword matches
+      return requestedKeywords.some(reqKw =>
+        convKeywords.some(convKw => convKw.includes(reqKw) || reqKw.includes(convKw))
+      );
+    });
+  }
+
+  // Apply limit AFTER all filters (so we get limit results that match all filters)
+  results = results.slice(0, limit);
 
   // Format output with file sizes
   const output = [];
@@ -2209,7 +2232,8 @@ async function runAutomatedSearch(args) {
       preview: r.preview || (r.fullText ? r.fullText.slice(0, 200) : ''),
       relevance: r.relevance,
       matches: r.totalOccurrences,
-      highlightedPreview: r.preview // Already has [HIGHLIGHT] markers
+      highlightedPreview: r.preview, // Already has [HIGHLIGHT] markers
+      keywords: r.keywords ? r.keywords.map(k => typeof k === 'string' ? k : k.term) : [] // Extract keyword terms for agents
     });
   }
 
@@ -2584,7 +2608,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
 async function main() {
   // Check for CLI arguments (non-interactive mode)
   const args = parseArgs();
-  if (args['--search'] || args['--search-term'] || args['--json'] || args['--filter-repo'] || args['--filter-date']) {
+  if (args['--search'] || args['--search-term'] || args['--json'] || args['--filter-repo'] || args['--filter-date'] || args['--keyword'] || args['--keywords']) {
     return await runAutomatedSearch(args);
   }
 
