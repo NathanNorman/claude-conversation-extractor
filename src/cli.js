@@ -2777,29 +2777,46 @@ async function main() {
       break;
         
     case 'index_only':
-      const indexBuilder = new IndexBuilder();
-      const indexResult = await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
-      await setupManager.markIndexComplete(indexResult.documentCount);
-      // Load MiniSearch index
-      const miniSearchIdx = new MiniSearchEngine();
-      const indexLoaded = await miniSearchIdx.loadIndex();
-      if (indexLoaded) {
-        searchInterface = miniSearchIdx;
-      }
+      console.log(colors.info('\n🔨 Building search index from all exported markdown files...\n'));
+      const indexOnlySpinner = ora('Building index with keyword extraction...').start();
+
+      // Build directly from markdown files using MiniSearchEngine
+      const indexOnlyEngine = new MiniSearchEngine({ exportDir: status.exportLocation });
+      const indexOnlyStats = await indexOnlyEngine.buildIndex();
+
+      indexOnlySpinner.succeed(colors.success(`✅ Index built with ${indexOnlyStats.totalConversations} conversations!`));
+
+      await setupManager.markIndexComplete(indexOnlyStats.totalConversations);
+
+      // Use the newly built index
+      searchInterface = indexOnlyEngine;
+
+      console.log(colors.dim(`\n  Conversations indexed: ${indexOnlyStats.totalConversations}`));
+      console.log(colors.dim(`  Index size: ${(indexOnlyStats.indexSizeBytes / 1024 / 1024).toFixed(2)} MB\n`));
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
       break;
         
     case 'force_rebuild_index':
-      console.log(colors.info('\n🔄 Rebuilding search index with improved keyword extraction...\n'));
-      const forceIndexBuilder = new IndexBuilder();
-      const forceResult = await forceIndexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
-      await setupManager.markIndexComplete(forceResult.documentCount);
-      // Reload MiniSearch index
-      const reloadedMiniSearch = new MiniSearchEngine();
-      const reloaded = await reloadedMiniSearch.loadIndex();
-      if (reloaded) {
-        searchInterface = reloadedMiniSearch;
-        console.log(colors.success('\n✅ Index rebuilt with improved keywords!\n'));
-      }
+      console.log(colors.info('\n🔄 Rebuilding search index from all exported markdown files...\n'));
+      const forceRebuildSpinner = ora('Building index with keyword extraction...').start();
+
+      // Build directly from markdown files using MiniSearchEngine
+      const forceRebuildEngine = new MiniSearchEngine({ exportDir: status.exportLocation });
+      const forceRebuildStats = await forceRebuildEngine.buildIndex();
+
+      forceRebuildSpinner.succeed(colors.success(`✅ Index rebuilt with ${forceRebuildStats.totalConversations} conversations!`));
+
+      await setupManager.markIndexComplete(forceRebuildStats.totalConversations);
+
+      // Reload the index
+      searchInterface = forceRebuildEngine;
+
+      console.log(colors.dim(`\n  Conversations indexed: ${forceRebuildStats.totalConversations}`));
+      console.log(colors.dim(`  Index size: ${(forceRebuildStats.indexSizeBytes / 1024 / 1024).toFixed(2)} MB\n`));
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // Re-run main to show updated menu
       return main();
 
