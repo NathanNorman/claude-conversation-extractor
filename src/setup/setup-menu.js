@@ -146,6 +146,11 @@ export async function showSetupMenu(status) {
       name: `📁 Change Export Location ${colors.dim(`(current: ${exportPath})`)}`,
       value: 'change_location',
       short: 'Change Location'
+    },
+    {
+      name: `🔄 Force Rebuild Search Index ${colors.dim('(reprocess all conversations)')}`,
+      value: 'force_rebuild_index',
+      short: 'Force Rebuild'
     }
   );
 
