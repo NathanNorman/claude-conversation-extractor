@@ -4,6 +4,7 @@ import inquirer from 'inquirer';
 import ora from 'ora';
 import { join } from 'path';
 import { homedir } from 'os';
+import { analyzeKeywords } from '../analytics/analyzers/keyword-analyzer.js';
 
 // Color scheme matching the main CLI
 const colors = {
@@ -329,6 +330,63 @@ export async function showAnalytics(status) {
 
         const bar = '█'.repeat(Math.round((stats.count / cache.overview.totalConversations) * 20));
         analyticsLines.push(`  ${projectName}: ${bar} ${colors.dim(`(${stats.count} convs)`)}`);
+      }
+    }
+
+    // Keyword Analytics Section
+    if (cache && cache.overview.totalConversations > 0) {
+      analyticsLines.push('');
+      analyticsLines.push(colors.info('🏷️  Top Keywords:'));
+
+      try {
+        // Load conversations with keywords from search engine
+        const { MiniSearchEngine } = await import('../search/minisearch-engine.js');
+        const engine = new MiniSearchEngine();
+        await engine.loadIndex();
+
+        // Get all conversations with keywords
+        const conversations = Array.from(engine.conversationData.values());
+
+        // Analyze keywords
+        const keywordAnalytics = analyzeKeywords(conversations);
+
+        // Display top 10 keywords with bars
+        if (keywordAnalytics.topKeywords.length > 0) {
+          const maxCount = keywordAnalytics.topKeywords[0].count || 1;
+          const barWidth = 20;
+
+          for (const kw of keywordAnalytics.topKeywords.slice(0, 10)) {
+            const barLength = Math.round((kw.count / maxCount) * barWidth);
+            const bar = '█'.repeat(barLength);
+            const paddedTerm = kw.term.padEnd(18);
+            const countStr = kw.count.toString().padStart(4);
+            analyticsLines.push(`  ${paddedTerm} ${colors.primary(bar)} ${colors.accent(countStr)}`);
+          }
+
+          analyticsLines.push('');
+
+          // Show trending keywords if available
+          if (keywordAnalytics.trends && keywordAnalytics.trends.length > 0) {
+            analyticsLines.push(colors.info('📈 Trending Keywords:'));
+
+            for (const trend of keywordAnalytics.trends.slice(0, 5)) {
+              const arrow = trend.direction === 'up' ? '↗️' : trend.direction === 'down' ? '↘️' : '→';
+              const changeColor = trend.direction === 'up' ? colors.success : trend.direction === 'down' ? colors.error : colors.dim;
+              const sign = trend.changePercent > 0 ? '+' : '';
+              analyticsLines.push(`  ${arrow} ${trend.keyword.padEnd(16)} ${changeColor(sign + trend.changePercent + '%')}`);
+            }
+
+            analyticsLines.push('');
+          }
+
+          // Show keyword coverage stats
+          analyticsLines.push(colors.dim(`  ${keywordAnalytics.summary.uniqueKeywords} unique keywords across ${keywordAnalytics.summary.conversationsWithKeywords} conversations`));
+          analyticsLines.push('');
+        }
+      } catch (error) {
+        // Keyword analytics failed - don't block other analytics
+        analyticsLines.push(colors.dim('  (Keyword analytics unavailable)'));
+        analyticsLines.push('');
       }
     }
 

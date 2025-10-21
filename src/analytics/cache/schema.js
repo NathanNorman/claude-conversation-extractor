@@ -117,6 +117,20 @@ export function createEmptyCache() {
         byHook: {},
         topHooks: []
       }
+    },
+
+    keywords: {
+      summary: {
+        totalConversations: 0,
+        conversationsWithKeywords: 0,
+        uniqueKeywords: 0,
+        coveragePercentage: 0
+      },
+      topKeywords: [],
+      topKeywordsByProject: {},
+      topKeywordPairs: [],
+      trends: [],
+      rareKeywords: []
     }
   };
 }

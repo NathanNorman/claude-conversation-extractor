@@ -65,6 +65,11 @@ export async function exportToMarkdown(cache, options = {}) {
     lines.push(...generateProjectsSection(cache));
   }
 
+  // Keywords
+  if (sections.includes('all') || sections.includes('keywords')) {
+    lines.push(...generateKeywordsSection(cache));
+  }
+
   const markdownContent = lines.join('\n');
 
   // Generate filename with timestamp if requested
@@ -341,6 +346,66 @@ function generateProjectsSection(cache) {
       }
       lines.push('');
     }
+  }
+
+  lines.push('---');
+  lines.push('');
+
+  return lines;
+}
+
+/**
+ * Generate keyword analytics section
+ */
+function generateKeywordsSection(cache) {
+  const lines = [];
+
+  if (!cache.keywords) {
+    return lines;
+  }
+
+  lines.push('## 🏷️ Keyword Analytics');
+  lines.push('');
+
+  // Top Keywords subsection
+  if (cache.keywords.topKeywords && cache.keywords.topKeywords.length > 0) {
+    lines.push('### Top Keywords');
+    lines.push('');
+    lines.push('| Rank | Keyword | Count | Percentage |');
+    lines.push('|------|---------|-------|-----------|');
+
+    for (let i = 0; i < Math.min(20, cache.keywords.topKeywords.length); i++) {
+      const kw = cache.keywords.topKeywords[i];
+      lines.push(`| ${i + 1} | ${kw.term} | ${kw.count} | ${kw.percentage}% |`);
+    }
+    lines.push('');
+  }
+
+  // Keywords by Project subsection
+  if (cache.keywords.topKeywordsByProject && Object.keys(cache.keywords.topKeywordsByProject).length > 0) {
+    lines.push('### Keywords by Project');
+    lines.push('');
+
+    for (const [project, keywords] of Object.entries(cache.keywords.topKeywordsByProject)) {
+      if (Array.isArray(keywords) && keywords.length > 0) {
+        const topKeywords = keywords.slice(0, 5).map(k => k.term).join(', ');
+        lines.push(`- **${project}**: ${topKeywords}`);
+      }
+    }
+    lines.push('');
+  }
+
+  // Trending Keywords subsection
+  if (cache.keywords.trends && cache.keywords.trends.length > 0) {
+    lines.push('### Trending Keywords');
+    lines.push('');
+
+    for (const trend of cache.keywords.trends.slice(0, 5)) {
+      const arrow = trend.direction === 'up' ? '↗️' : trend.direction === 'down' ? '↘️' : '→';
+      const sign = trend.changePercent > 0 ? '+' : '';
+      lines.push(`${arrow} **${trend.keyword}** (${sign}${trend.changePercent}%)`);
+    }
+    lines.push('');
   }
 
   lines.push('---');
