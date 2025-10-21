@@ -71,7 +71,10 @@ const STOPWORDS = new Set([
   // Code-related stopwords (too generic)
   'function', 'const', 'let', 'var', 'return', 'import', 'export', 'class', 'new',
   // Common meta words about conversations themselves (not useful as keywords)
-  'conversation', 'conversations', 'message', 'messages', 'chat', 'response', 'question', 'answer'
+  'conversation', 'conversations', 'message', 'messages', 'chat', 'response', 'question', 'answer',
+  // Claude Code specific meta-words (about the tool, not conversation content)
+  'skill', 'skills', 'hook', 'hooks', 'command', 'commands', 'tool', 'tools', 'agent', 'agents',
+  'file', 'files', 'code', 'line', 'lines', 'error', 'errors'
 ]);
 
 // Patterns to identify and filter code syntax
