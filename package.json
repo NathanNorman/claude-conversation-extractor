@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "type": "module",
   "bin": {
-    "claude-logs": "./src/cli.js"
+    "claude-logs": "./bin/claude-logs.js"
   },
   "repository": {
     "type": "git",
@@ -16,7 +16,8 @@
   },
   "homepage": "https://github.com/NathanNorman/claude-conversation-extractor#readme",
   "scripts": {
-    "start": "node src/cli.js",
+    "start": "node --max-old-space-size=8192 src/cli.js",
+    "start:normal": "node src/cli.js",
     "test": "./scripts/test-with-index-protection.sh",
     "test:unsafe": "node --experimental-vm-modules node_modules/.bin/jest",
     "test:quick": "node --experimental-vm-modules node_modules/.bin/jest tests/basic.test.js tests/utils.test.js tests/date-filters.test.js",

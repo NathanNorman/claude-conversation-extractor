@@ -204,33 +204,39 @@ function debounce(func, wait) {
 class ClaudeConversationExtractor {
   constructor() {
     this.conversationsPath = join(homedir(), '.claude', 'projects');
+    // Create MiniSearchEngine instance to use its getDisplayName method
+    this.searchEngine = new MiniSearchEngine();
   }
 
   async findConversations() {
     const conversations = [];
-    
+
     try {
       const projects = await readdir(this.conversationsPath);
-      
+
       for (const project of projects) {
         const projectPath = join(this.conversationsPath, project);
         const projectStat = await stat(projectPath);
-        
+
         if (projectStat.isDirectory()) {
           try {
             const files = await readdir(projectPath);
-            
+
             for (const file of files) {
               if (file.endsWith('.jsonl')) {
                 const filePath = join(projectPath, file);
                 const fileStat = await stat(filePath);
-                
+
+                // Use getDisplayName to convert raw directory name to clean display name
+                const displayName = this.searchEngine.getDisplayName(project);
+
                 conversations.push({
                   path: filePath,
                   name: file,
                   size: fileStat.size,
                   modified: fileStat.mtime,
-                  project: project
+                  project: displayName,
+                  rawProject: project  // Keep raw name for debugging if needed
                 });
               }
             }
@@ -242,7 +248,7 @@ class ClaudeConversationExtractor {
     } catch (error) {
       console.log(colors.error('❌ Error accessing conversations directory'));
     }
-    
+
     return conversations.sort((a, b) => b.modified.getTime() - a.modified.getTime());
   }
 
@@ -731,7 +737,7 @@ async function showLiveSearch(searchInterface = null) {
         const filteredConversations = applyFilters(conversationsToShow.map(conv => ({
           ...conv,
           name: conv.project,
-          preview: '',
+          preview: conv.preview || (conv.fullText ? conv.fullText.slice(0, 200) : ''),
           relevance: 1.0
         })), state.activeFilters);
 
@@ -779,8 +785,39 @@ async function showLiveSearch(searchInterface = null) {
 
             // Show preview for selected conversation
             if (isSelected) {
-              // Use fullText or preview from the conversation object (already populated)
+              // Lazy-load conversation content if not already loaded
               let fullText = conv.fullText || conv.preview || '';
+
+              // If no preview/fullText, try to load from file
+              if (!fullText && conv.path) {
+                try {
+                  const content = await readFile(conv.path, 'utf-8');
+                  const lines = content.trim().split('\n').filter(line => line.trim());
+                  let extractedText = '';
+
+                  for (const line of lines) {
+                    try {
+                      const data = JSON.parse(line);
+                      if ((data.type === 'user' || data.type === 'assistant') && data.message && !data.isMeta) {
+                        const messageText = typeof data.message.content === 'string'
+                          ? data.message.content
+                          : Array.isArray(data.message.content)
+                            ? data.message.content.filter(c => c.type === 'text').map(c => c.text).join(' ')
+                            : '';
+                        extractedText += ' ' + messageText;
+                      }
+                    } catch {
+                      // Skip invalid JSON lines
+                    }
+                  }
+
+                  fullText = extractedText.trim();
+                  // Cache it on the conversation object for next time
+                  conv.fullText = fullText;
+                } catch (err) {
+                  // Failed to load content, skip preview
+                }
+              }
 
               if (fullText) {
                 // Calculate preview based on current page (500 chars per page)

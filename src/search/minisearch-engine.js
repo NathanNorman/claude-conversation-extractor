@@ -262,6 +262,76 @@ export class MiniSearchEngine {
   }
 
   /**
+   * Add a batch of conversations to an existing index (for batched processing)
+   */
+  async addBatchToIndex(processedConversations) {
+    if (!this.miniSearch) {
+      this.initializeMiniSearch();
+    }
+
+    const documents = [];
+    let conversationIndex = this.stats.totalDocuments || 0;
+
+    for (const conv of processedConversations) {
+      // Skip empty conversations
+      if (!conv.fullText || conv.fullText.trim().length === 0) {
+        continue;
+      }
+
+      const rawProject = conv.project || 'Unknown';
+      const displayProject = this.getDisplayName(rawProject);
+
+      const document = {
+        id: conv.id || `conv_${conversationIndex++}`,
+        content: conv.fullText || conv.preview || '',
+        project: displayProject,
+        keywords: (conv.extractedKeywords || []).join(' '),
+        toolsUsed: (conv.toolsUsed || []).join(' '),
+        preview: conv.preview || '',
+        modified: conv.modified || new Date().toISOString(),
+        wordCount: conv.wordCount || 0,
+        messageCount: conv.messageCount || 0
+      };
+      documents.push(document);
+
+      // Store conversation data for retrieval (without keeping full text in memory long-term)
+      this.conversationData.set(document.id, {
+        project: displayProject,
+        rawProject: rawProject,
+        exportedFile: conv.exportedFile,
+        originalPath: conv.originalPath,
+        modified: conv.modified,
+        wordCount: conv.wordCount,
+        messageCount: conv.messageCount,
+        preview: conv.preview,
+        // Store full text for search, but it will be saved to disk and can be freed from memory
+        fullText: conv.fullText || document.content,
+        content: conv.fullText || document.content,
+        _fullText: conv.fullText || document.content,
+        _content: conv.fullText || document.content
+      });
+    }
+
+    // Add documents to the index
+    if (documents.length > 0) {
+      this.miniSearch.addAll(documents);
+    }
+
+    // Update stats
+    this.stats.totalDocuments += documents.length;
+    this.stats.totalConversations += documents.length;
+    this.stats.indexedAt = new Date().toISOString();
+
+    // Save index incrementally to disk (prevents holding everything in memory)
+    await this.saveIndex();
+
+    return {
+      added: documents.length,
+      totalDocuments: this.stats.totalDocuments
+    };
+  }
+
+  /**
    * Build index from JSONL files in projectsDir
    */
   async buildIndex(processedConversations = null) {
@@ -1222,6 +1292,7 @@ export class MiniSearchEngine {
     // Process only new files
     const newDocuments = [];
     const updatedDocuments = [];
+    const processedSessionIds = new Set(); // Track session IDs in this batch to avoid duplicates
 
     for (const file of newFiles) {
       try {
@@ -1235,6 +1306,13 @@ export class MiniSearchEngine {
           this.logger.warn(`Skipping ${file.name}: empty content`);
           continue;
         }
+
+        // Skip if we've already processed this session ID in this batch
+        if (processedSessionIds.has(conversation.sessionId)) {
+          this.logger.warn(`Skipping ${file.name}: duplicate session ID ${conversation.sessionId} already processed in this batch`);
+          continue;
+        }
+        processedSessionIds.add(conversation.sessionId);
 
         const rawProject = conversation.project || 'Unknown';
         const displayProject = this.getDisplayName(rawProject);
@@ -1256,10 +1334,27 @@ export class MiniSearchEngine {
         };
 
         // Check if this session ID already exists in index
-        const existingDoc = this.conversationData.get(conversation.sessionId);
-        if (existingDoc) {
-          // Update existing document
-          this.miniSearch.discard(conversation.sessionId);
+        // We need to check BOTH conversationData AND the MiniSearch index itself
+        const existsInData = this.conversationData.has(conversation.sessionId);
+        let existsInIndex = false;
+        try {
+          // Try to check if document exists in MiniSearch index
+          const results = this.miniSearch.search(conversation.sessionId, { prefix: false, fuzzy: false });
+          existsInIndex = results.some(r => r.id === conversation.sessionId);
+        } catch (err) {
+          // If search fails, assume it doesn't exist
+        }
+
+        const documentExists = existsInData || existsInIndex;
+
+        if (documentExists) {
+          // Update existing document - remove old one first
+          try {
+            this.miniSearch.discard(conversation.sessionId);
+          } catch (err) {
+            // Document might not exist in index, that's ok
+            this.logger.warn(`Could not remove existing document ${conversation.sessionId}: ${err.message}`);
+          }
           updatedDocuments.push(document);
         } else {
           // New document
@@ -1286,10 +1381,29 @@ export class MiniSearchEngine {
       }
     }
 
-    // Add/update documents in index
-    const allDocuments = [...newDocuments, ...updatedDocuments];
-    if (allDocuments.length > 0) {
-      this.miniSearch.addAll(allDocuments);
+    // Add/update documents in index one at a time to avoid duplicate ID errors
+    let addedCount = 0;
+    let failedCount = 0;
+    for (const doc of [...newDocuments, ...updatedDocuments]) {
+      try {
+        this.miniSearch.add(doc);
+        addedCount++;
+      } catch (err) {
+        // If add fails due to duplicate, try discard + add
+        if (err.message && err.message.includes('duplicate ID')) {
+          try {
+            this.miniSearch.discard(doc.id);
+            this.miniSearch.add(doc);
+            addedCount++;
+          } catch (err2) {
+            this.logger.error(`Failed to update document ${doc.id}: ${err2.message}`);
+            failedCount++;
+          }
+        } else {
+          this.logger.error(`Failed to add document ${doc.id}: ${err.message}`);
+          failedCount++;
+        }
+      }
     }
 
     // Update stats
@@ -1430,10 +1544,16 @@ export class MiniSearchEngine {
     if (!this.miniSearch) {
       await this.loadIndex();
     }
-    
+
     // Vacuum removes deleted documents and optimizes storage
-    this.miniSearch.vacuum();
-    
+    // Wrap in try-catch since vacuum can fail with corrupted indexes
+    try {
+      this.miniSearch.vacuum();
+    } catch (err) {
+      this.logger.warn('Vacuum failed (index may be corrupted), skipping optimization:', err.message);
+      // Continue with other optimizations even if vacuum fails
+    }
+
     // Keep fullText fields for search highlighting functionality
     // Only remove truly private fields marked with double underscore
     for (const [_id, conv] of this.conversationData.entries()) {
@@ -1443,16 +1563,16 @@ export class MiniSearchEngine {
           delete conv[key];
         }
       }
-      
+
       // Trim preview to reasonable size
       if (conv.preview && conv.preview.length > 200) {
         conv.preview = conv.preview.slice(0, 200);
       }
     }
-    
+
     // Save the optimized index
     await this.saveIndex();
-    
+
     this.logger.info('Index optimized and saved');
   }
 

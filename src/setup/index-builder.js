@@ -103,32 +103,64 @@ class IndexBuilder {
     }).start() : null;
 
     let processed = 0;
-    const processedConversations = [];
-    
-    // Step 1: Extract text from all conversations
-    for (const conversation of conversations) {
-      try {
-        const indexEntry = await this.processConversation(conversation, exportDir);
-        if (indexEntry) {
-          processedConversations.push(indexEntry);
-        }
-        
-        processed++;
-        const percentage = Math.round((processed / conversations.length) * 100);
-        if (spinner) {
-          spinner.text = `Processing conversations: ${percentage}% (${processed}/${conversations.length})`;
-        }
 
-        if (progressCallback) {
-          progressCallback({
-            processed,
-            total: conversations.length,
-            percentage,
-            currentFile: conversation.project
-          });
+    // Process conversations in batches to avoid memory exhaustion
+    const BATCH_SIZE = 20; // Process 20 conversations at a time
+    const totalBatches = Math.ceil(conversations.length / BATCH_SIZE);
+
+    // Initialize the search engine BEFORE processing to enable batch additions
+    if (!isTestEnv) {
+      console.log(colors.info('   Initializing search index...'));
+    }
+    const searchEngine = new MiniSearchEngine({
+      projectsDir: this.projectsDir,
+      indexPath: this.indexPath,
+      exportDir: exportDir
+    });
+    await searchEngine.buildIndex([]); // Initialize with empty index
+
+    // Step 1: Extract text from conversations in batches
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const batchStart = batchIndex * BATCH_SIZE;
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, conversations.length);
+      const batch = conversations.slice(batchStart, batchEnd);
+
+      const processedBatch = [];
+
+      for (const conversation of batch) {
+        try {
+          const indexEntry = await this.processConversation(conversation, exportDir);
+          if (indexEntry) {
+            processedBatch.push(indexEntry);
+          }
+
+          processed++;
+          const percentage = Math.round((processed / conversations.length) * 100);
+          if (spinner) {
+            spinner.text = `Processing batch ${batchIndex + 1}/${totalBatches}: ${percentage}% (${processed}/${conversations.length})`;
+          }
+
+          if (progressCallback) {
+            progressCallback({
+              processed,
+              total: conversations.length,
+              percentage,
+              currentFile: conversation.project
+            });
+          }
+        } catch (error) {
+          console.error(`Error processing ${conversation.project}:`, error.message);
         }
-      } catch (error) {
-        console.error(`Error processing ${conversation.project}:`, error.message);
+      }
+
+      // Add batch to search index
+      if (processedBatch.length > 0) {
+        await searchEngine.addBatchToIndex(processedBatch);
+      }
+
+      // Force garbage collection if available (requires --expose-gc flag)
+      if (global.gc && batchIndex < totalBatches - 1) {
+        global.gc();
       }
     }
 
@@ -136,34 +168,19 @@ class IndexBuilder {
       spinner.stop();
     }
 
-    // Debug: log processed conversations count
-    if (isTestEnv && processedConversations.length === 0) {
-      console.warn('Warning: No processed conversations to index');
-    }
+    // Get final stats from the search engine
+    const miniSearchStats = searchEngine.getStats();
 
-    // Step 2: Build the MiniSearch index from the processed conversations
-    if (!isTestEnv) {
-      console.log(colors.info('   Indexing for fast search...'));
-    }
-    // CRITICAL: Pass the test-specific indexPath to MiniSearchEngine
-    // This ensures tests write to their isolated test directory, not production index
-    const searchEngine = new MiniSearchEngine({
-      projectsDir: this.projectsDir,
-      indexPath: this.indexPath,  // Use the indexPath from this IndexBuilder instance
-      exportDir: exportDir
-    });
-    const miniSearchStats = await searchEngine.buildIndex(processedConversations);
-    
     // Update metadata for compatibility
     const buildDuration = (Date.now() - startTime) / 1000;
     this.index.metadata.buildDate = new Date().toISOString();
-    this.index.metadata.totalConversations = processedConversations.length;
+    this.index.metadata.totalConversations = processed;
     this.index.metadata.buildDuration = buildDuration;
     
     if (!isTestEnv) {
       console.log(colors.success('\n✅ Search index built!'));
       console.log(colors.info(`   Conversations indexed: ${processed}`));
-      console.log(colors.info(`   MiniSearch terms: ${miniSearchStats.indexSize}`));
+      console.log(colors.info(`   Total documents: ${miniSearchStats.totalDocuments || 0}`));
       console.log(colors.info(`   Build time: ${buildDuration.toFixed(1)}s`));
       console.log(colors.info('   ⚡ Search with fuzzy matching, typo tolerance, and more!'));
     }
@@ -194,7 +211,7 @@ class IndexBuilder {
       documentCount: miniSearchStats.totalDocuments || processed,
       conversationCount: processed,
       duration: buildDuration,
-      keywords: miniSearchStats.indexSize,
+      keywords: miniSearchStats.totalDocuments || 0,
       conversationsIndexed: processed,
       buildDuration,
       stats: {
@@ -266,12 +283,16 @@ class IndexBuilder {
       // Create preview (first 200 chars of meaningful content)
       const preview = fullText.slice(0, 200).trim() + '...';
       
-      // Determine export file name
-      const timestamp = conversation.modified 
-        ? new Date(conversation.modified).toISOString().split('T')[0]
-        : new Date().toISOString().split('T')[0];
-      const projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
-      const exportedFile = `${projectName}_${timestamp}.md`;
+      // Determine export file name - MUST match bulk extractor naming!
+      // Bulk extractor uses: ${projectName}_${sessionId}.md
+      // Extract session ID from the JSONL filename (it's the UUID part)
+      const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
+
+      // Clean project name (remove -Users-nathan-norman- prefix if present)
+      let projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
+      projectName = projectName.replace(/^-?Users-[^-]+-[^-]+-/, '').replace(/^-/, '') || 'home';
+
+      const exportedFile = `${projectName}_${sessionId}.md`;
       
       return {
         id: `conv_${crypto.randomBytes(8).toString('hex')}`,
