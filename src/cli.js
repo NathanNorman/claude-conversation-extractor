@@ -2702,7 +2702,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
 
     // For choices that need to be handled by main()'s switch statement, exit the loop
     // These are setup-related operations that change system state
-    const mainHandledChoices = ['extract_only', 'index_only', 'change_location', 'view_analytics', 'view_achievements'];
+    const mainHandledChoices = ['extract_only', 'index_only', 'force_rebuild_index', 'change_location', 'view_analytics', 'view_achievements'];
     if (mainHandledChoices.includes(choice)) {
       return choice;
     }
