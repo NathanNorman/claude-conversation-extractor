@@ -69,7 +69,9 @@ const STOPWORDS = new Set([
   'like', 'know', 'need', 'want', 'see', 'think', 'sure', 'okay', 'ok', 'yes', 'no',
   'please', 'thanks', 'thank', 'hi', 'hello', 'hey',
   // Code-related stopwords (too generic)
-  'function', 'const', 'let', 'var', 'return', 'import', 'export', 'class', 'new'
+  'function', 'const', 'let', 'var', 'return', 'import', 'export', 'class', 'new',
+  // Common meta words about conversations themselves (not useful as keywords)
+  'conversation', 'conversations', 'message', 'messages', 'chat', 'response', 'question', 'answer'
 ]);
 
 // Patterns to identify and filter code syntax
@@ -162,16 +164,15 @@ export class KeywordExtractor {
 
   /**
    * Tokenize text and filter out stopwords and code syntax
-   * Also applies stemming to normalize plurals (conversation/conversations → convers)
+   * NOTE: Stemming disabled - it made keywords unreadable (migrate→migrat, story→stori)
    */
   tokenizeAndFilter(text) {
     // Tokenize
     const tokens = this.tokenizer.tokenize(text.toLowerCase());
 
-    // Filter out stopwords and code syntax, then stem
-    const filtered = tokens
-      .filter(token => !shouldFilterTerm(token))
-      .map(token => PorterStemmer.stem(token));
+    // Filter out stopwords and code syntax
+    // Stemming is NOT applied - it made keywords too ugly
+    const filtered = tokens.filter(token => !shouldFilterTerm(token));
 
     return filtered;
   }
