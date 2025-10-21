@@ -211,13 +211,13 @@ export class BackgroundServiceManager {
         } else if (line.includes('Total time:')) {
           stats.totalTime = line.match(/(\d+)ms/)?.[1] + 'ms';
         } else if (line.includes('Active files:')) {
-          stats.activeFiles = parseInt(line.match(/(\d+)/)?.[1] || '0');
+          stats.activeFiles = parseInt(line.match(/Active files:\s*(\d+)/)?.[1] || '0');
         } else if (line.includes('Exported:')) {
-          stats.exported = parseInt(line.match(/(\d+)/)?.[1] || '0');
+          stats.exported = parseInt(line.match(/Exported:\s*(\d+)/)?.[1] || '0');
         } else if (line.includes('Skipped:')) {
-          stats.skipped = parseInt(line.match(/(\d+)/)?.[1] || '0');
+          stats.skipped = parseInt(line.match(/Skipped:\s*(\d+)/)?.[1] || '0');
         } else if (line.includes('Errors:')) {
-          stats.errors = parseInt(line.match(/(\d+)/)?.[1] || '0');
+          stats.errors = parseInt(line.match(/Errors:\s*(\d+)/)?.[1] || '0');
         }
       }
 
