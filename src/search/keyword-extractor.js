@@ -40,7 +40,7 @@
 
 import natural from 'natural';
 
-const { TfIdf, WordTokenizer, PorterStemmer } = natural;
+const { TfIdf, WordTokenizer } = natural;
 
 // Common stopwords to filter out (expanded list)
 const STOPWORDS = new Set([
