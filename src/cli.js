@@ -1505,8 +1505,8 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.primary('│ 🏷️  KEYWORDS:                                                       │'));
       console.log(colors.primary('│   Keywords displayed under each result (top 5)                   │'));
       console.log(colors.primary('│   keyword:term - Search conversations with specific keyword      │'));
-      console.log(colors.primary('│   Tab → Filters → Keywords to browse all keywords               │'));
-      console.log(colors.primary('│   Click keywords to filter results (in interactive mode)         │'));
+      console.log(colors.primary('│   keywords:a,b - Multiple keywords (OR logic)                    │'));
+      console.log(colors.primary('│   CLI: --keyword typescript  (for automation/agents)             │'));
       console.log(colors.primary('│                                                                   │'));
       console.log(colors.accent(`└───────────────────────────────────────────────────────────────────┘`));
       console.log(colors.dim('\nPress any key to continue...'));
