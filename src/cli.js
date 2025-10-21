@@ -339,7 +339,8 @@ class LiveSearchState {
     this.terminalSize = { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
     this.activeFilters = {
       repos: new Set(),
-      dateRange: null
+      dateRange: null,
+      keywords: new Set()
     };
     this.browsePreviewPage = 0; // Track which page of preview we're viewing in browse mode
   }
@@ -506,26 +507,35 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.success(`✅ Found ${conversationCount} conversations\n`));
       
       // Display active filters with prominent indicator
-      const hasActiveFilters = state.activeFilters.repos.size > 0 || state.activeFilters.dateRange;
-      
+      const hasActiveFilters = state.activeFilters.repos.size > 0 || state.activeFilters.dateRange || state.activeFilters.keywords.size > 0;
+
       if (hasActiveFilters) {
         console.log(colors.accent('┌─ FILTERS ACTIVE ─────────────────┐'));
-        
+
         // Show repo filter if active
         if (state.activeFilters.repos.size > 0) {
           const repoList = Array.from(state.activeFilters.repos);
-          const displayRepos = repoList.length > 3 
+          const displayRepos = repoList.length > 3
             ? repoList.slice(0, 3).join(', ') + `, +${repoList.length - 3} more`
             : repoList.join(', ');
           console.log(colors.highlight('│ 📁 Repos: ' + displayRepos));
         }
-        
+
         // Show date filter if active
         if (state.activeFilters.dateRange) {
           const dateDisplay = formatDateRange(state.activeFilters.dateRange.type, state.activeFilters.dateRange.custom);
           console.log(colors.highlight('│ 📅 Date: ' + dateDisplay));
         }
-        
+
+        // Show keyword filter if active
+        if (state.activeFilters.keywords.size > 0) {
+          const keywordList = Array.from(state.activeFilters.keywords);
+          const displayKeywords = keywordList.length > 3
+            ? keywordList.slice(0, 3).join(', ') + `, +${keywordList.length - 3} more`
+            : keywordList.join(', ');
+          console.log(colors.highlight('│ 🏷️  Keywords: ' + displayKeywords));
+        }
+
         console.log(colors.accent('└─ Press [Tab] to modify ──────────┘\n'));
       } else {
         console.log(colors.dim('  No filters active [Press Tab to filter]\n'));
@@ -871,6 +881,18 @@ async function showLiveSearch(searchInterface = null) {
                 }
 
                 console.log(colors.subdued('    └─'));
+
+                // Show keywords if available (top 5 for display)
+                if (conv.keywords && conv.keywords.length > 0) {
+                  const keywordBadges = conv.keywords
+                    .slice(0, 5)  // Show only top 5 keywords
+                    .map(k => {
+                      const term = typeof k === 'string' ? k : k.term;
+                      return chalk.bgBlue.black(` ${term} `);
+                    })
+                    .join(' ');
+                  console.log('\n    ' + keywordBadges);
+                }
               }
             }
           }
@@ -965,6 +987,7 @@ async function showLiveSearch(searchInterface = null) {
         const filterTypes = [
           { name: '📁 Filter by Repository', value: 'repo' },
           { name: '📅 Filter by Date Range', value: 'date' },
+          { name: '🏷️  Filter by Keyword', value: 'keyword' },
           { name: '🧹 Clear All Filters', value: 'clear' },
           { name: '← Back to Search', value: 'back' }
         ];
@@ -995,10 +1018,13 @@ async function showLiveSearch(searchInterface = null) {
           });
         } else if (filterType === 'date') {
           await showDateFilter();
+        } else if (filterType === 'keyword') {
+          await showKeywordFilter();
         } else if (filterType === 'clear') {
           logger.infoSync('Clearing all filters');
           state.activeFilters.repos.clear();
           state.activeFilters.dateRange = null;
+          state.activeFilters.keywords.clear();
         }
         
         // Re-enable raw mode and ensure readline is ready
@@ -1187,7 +1213,67 @@ async function showLiveSearch(searchInterface = null) {
         // Don't crash, just return to search
       }
     };
-    
+
+    // Show keyword filter selection
+    const showKeywordFilter = async () => {
+      try {
+        // Get all unique keywords from search engine
+        const allKeywords = new Map(); // keyword -> count
+
+        if (searchInterface && searchInterface.conversationData) {
+          for (const conv of searchInterface.conversationData.values()) {
+            if (conv.keywords && conv.keywords.length > 0) {
+              for (const kw of conv.keywords) {
+                const term = typeof kw === 'string' ? kw : kw.term;
+                allKeywords.set(term, (allKeywords.get(term) || 0) + 1);
+              }
+            }
+          }
+        }
+
+        if (allKeywords.size === 0) {
+          console.log(colors.warning('No keywords found. Rebuild index to extract keywords.'));
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          return;
+        }
+
+        // Sort by frequency and take top 50
+        const sortedKeywords = Array.from(allKeywords.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 50)
+          .map(([term, count]) => ({
+            name: `${term} (${count})`,
+            value: term
+          }));
+
+        console.log(colors.primary('\n🏷️  Select Keywords to Filter:\n'));
+        console.log(colors.dim('(Use space to select, Enter to confirm)\n'));
+
+        // Ensure stdin is in the right mode for inquirer
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+
+        const { selectedKeywords } = await inquirer.prompt([{
+          type: 'checkbox',
+          name: 'selectedKeywords',
+          message: 'Select keywords:',
+          choices: sortedKeywords,
+          pageSize: 15
+        }]);
+
+        // Update active filters
+        state.activeFilters.keywords.clear();
+        selectedKeywords.forEach(kw => state.activeFilters.keywords.add(kw));
+
+        console.log(colors.success(`\n✓ Filtering by ${selectedKeywords.length} keyword(s): ${selectedKeywords.join(', ')}`));
+
+      } catch (error) {
+        console.error('Keyword filter error:', error);
+        // Don't crash, just return to search
+      }
+    };
+
     // Apply filters to results
     const applyFilters = (searchResults, filters) => {
       logger.debug('applyFilters called', { 
@@ -1209,10 +1295,10 @@ async function showLiveSearch(searchInterface = null) {
       // Apply date filter
       if (filters.dateRange) {
         const dateRange = getDateRange(
-          filters.dateRange.type, 
+          filters.dateRange.type,
           filters.dateRange.custom
         );
-        
+
         filtered = filtered.filter(result => {
           const modified = result.modified || result.file?.modified;
           if (!modified) return false;
@@ -1220,14 +1306,32 @@ async function showLiveSearch(searchInterface = null) {
           return isDateInRange(date, dateRange);
         });
       }
-      
-      logger.info('Filters applied', { 
-        before: searchResults.length, 
+
+      // Apply keyword filter
+      if (filters.keywords && filters.keywords.size > 0) {
+        filtered = filtered.filter(result => {
+          if (!result.keywords || result.keywords.length === 0) return false;
+
+          // Extract keyword terms (handle both string and object formats)
+          const convKeywords = result.keywords.map(k =>
+            (typeof k === 'string' ? k : k.term).toLowerCase()
+          );
+
+          // Check if ANY requested keyword matches
+          return Array.from(filters.keywords).some(reqKw =>
+            convKeywords.some(convKw => convKw.includes(reqKw.toLowerCase()))
+          );
+        });
+      }
+
+      logger.info('Filters applied', {
+        before: searchResults.length,
         after: filtered.length,
         activeRepos: Array.from(filters.repos),
-        dateFilter: filters.dateRange?.type
+        dateFilter: filters.dateRange?.type,
+        activeKeywords: filters.keywords ? Array.from(filters.keywords) : []
       });
-      
+
       return filtered;
     };
     
