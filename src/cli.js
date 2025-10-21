@@ -751,6 +751,7 @@ async function showLiveSearch(searchInterface = null) {
               originalPath: conv.originalPath,
               preview: conv.preview || (conv.fullText ? conv.fullText.slice(0, 200) : ''),
               fullText: conv.fullText,
+              keywords: conv.keywords || [],  // Include keywords for filtering and display
               relevance: 1.0
             }))
             .sort((a, b) => b.modified.getTime() - a.modified.getTime());
@@ -766,7 +767,7 @@ async function showLiveSearch(searchInterface = null) {
         if (filteredConversations.length > 0) {
           // Show total from archive or from conversations
           const totalAvailable = hasArchive ? searchInterface.conversationData.size : conversationsToShow.length;
-          const isFiltered = filteredConversations.length < totalAvailable || state.activeFilters.repos.size > 0;
+          const isFiltered = filteredConversations.length < totalAvailable || state.activeFilters.repos.size > 0 || state.activeFilters.keywords.size > 0;
 
           let countDisplay;
           if (isFiltered) {
@@ -1266,7 +1267,11 @@ async function showLiveSearch(searchInterface = null) {
         state.activeFilters.keywords.clear();
         selectedKeywords.forEach(kw => state.activeFilters.keywords.add(kw));
 
-        console.log(colors.success(`\n✓ Filtering by ${selectedKeywords.length} keyword(s): ${selectedKeywords.join(', ')}`));
+        if (selectedKeywords.length > 0) {
+          console.log(colors.success(`\n✓ Filtering by ${selectedKeywords.length} keyword(s): ${selectedKeywords.join(', ')}`));
+        } else {
+          console.log(colors.success('\n✓ Keyword filter cleared'));
+        }
 
       } catch (error) {
         console.error('Keyword filter error:', error);
