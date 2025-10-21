@@ -265,7 +265,25 @@ class HtmlExporter {
             border-radius: 4px;
             font-size: 0.9em;
         }
-        
+
+        .keywords {
+            margin: 15px 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .keyword {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 16px;
+            font-size: 14px;
+            font-weight: 500;
+            border: 1px solid #bbdefb;
+        }
+
         footer {
             margin-top: 40px;
             padding-top: 20px;
@@ -319,6 +337,17 @@ class HtmlExporter {
    * @returns {string} HTML header
    */
   generateHeader(conversation) {
+    let keywordsHtml = '';
+    if (conversation.keywords && conversation.keywords.length > 0) {
+      const keywordBadges = conversation.keywords
+        .map(k => `<span class="keyword">${this.escapeHtml(k.term)}</span>`)
+        .join('');
+      keywordsHtml = `
+        <div class="keywords">
+            ${keywordBadges}
+        </div>`;
+    }
+
     return `
     <header>
         <h1>${this.escapeHtml(conversation.name || 'Untitled Conversation')}</h1>
@@ -327,7 +356,7 @@ class HtmlExporter {
             ${conversation.created_at ? `<span>Created: ${this.formatDate(conversation.created_at)}</span> | ` : ''}
             ${conversation.updated_at ? `<span>Updated: ${this.formatDate(conversation.updated_at)}</span> | ` : ''}
             <span>${conversation.messages ? conversation.messages.length : 0} messages</span>
-        </div>
+        </div>${keywordsHtml}
     </header>`;
   }
 

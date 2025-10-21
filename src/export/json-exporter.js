@@ -218,14 +218,17 @@ class JsonExporter {
    */
   processConversation(conversation, options = {}) {
     const processed = { ...conversation };
-    
+
+    // Ensure keywords field is included
+    processed.keywords = conversation.keywords || [];
+
     // Add export metadata
     processed._export = {
       timestamp: new Date().toISOString(),
       format: 'json',
       version: '1.0.0'
     };
-    
+
     // In detailed mode, preserve all data
     if (options.detailed) {
       // Include all tool use details
@@ -247,7 +250,7 @@ class JsonExporter {
         });
       }
     }
-    
+
     return processed;
   }
 

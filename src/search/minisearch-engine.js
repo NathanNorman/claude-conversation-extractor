@@ -794,12 +794,18 @@ export class MiniSearchEngine {
       };
     }
     
-    // Handle field-specific search (e.g., project:toast, role:human)
+    // Handle field-specific search (e.g., project:toast, role:human, keyword:typescript)
+    const keywordFilters = [];
     modifiedQuery = modifiedQuery.replace(/(\w+):(\S+)/g, (match, field, value) => {
-      if (['project', 'tools', 'role'].includes(field)) {
+      if (['project', 'tools', 'role', 'keyword', 'keywords'].includes(field)) {
         if (field === 'role') {
           // Filter by role in post-processing
           searchOptions.roleFilter = value;
+        } else if (field === 'keyword' || field === 'keywords') {
+          // Support keyword:term and keywords:term1,term2
+          const terms = value.split(',').map(t => t.trim().toLowerCase());
+          keywordFilters.push(...terms);
+          return ''; // Remove from query - filter by keywords instead
         } else {
           searchOptions.fields = [field];
         }
@@ -807,6 +813,33 @@ export class MiniSearchEngine {
       }
       return match;
     });
+
+    // Add keyword filter if specified
+    if (keywordFilters.length > 0) {
+      const existingFilter = searchOptions.filter;
+      searchOptions.filter = (result) => {
+        // Get conversation keywords
+        const conv = this.conversationData.get(result.id);
+        if (!conv || !conv.keywords) return false;
+
+        // Extract keyword terms
+        const convKeywords = conv.keywords.map(k =>
+          (typeof k === 'string' ? k : k.term).toLowerCase()
+        );
+
+        // Check if ANY of the requested keywords match
+        const hasKeyword = keywordFilters.some(kw =>
+          convKeywords.some(ck => ck.includes(kw) || kw.includes(ck))
+        );
+
+        // Apply existing filter if present
+        if (existingFilter && hasKeyword) {
+          return existingFilter(result);
+        }
+
+        return hasKeyword;
+      };
+    }
     
     // Handle fuzzy search operator ~
     if (modifiedQuery.includes('~')) {

@@ -685,6 +685,18 @@ async function showLiveSearch(searchInterface = null) {
                 console.log(colors.subdued('    │ ') + renderedLine);
               }
               console.log(colors.subdued('    └─'));
+
+              // Show keywords if available (top 5 for display)
+              if (result.keywords && result.keywords.length > 0) {
+                const keywordBadges = result.keywords
+                  .slice(0, 5)  // Show only top 5 keywords
+                  .map(k => {
+                    const term = typeof k === 'string' ? k : k.term;
+                    return chalk.bgBlue.black(` ${term} `);
+                  })
+                  .join(' ');
+                console.log('\n    ' + keywordBadges);
+              }
             }
           });
           
@@ -1489,6 +1501,12 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.primary('│   Ctrl+Space - Toggle multi-select mode                          │'));
       console.log(colors.primary('│   Esc - Clear search or exit                                     │'));
       console.log(colors.primary('│   Ctrl+C - Exit immediately                                      │'));
+      console.log(colors.primary('│                                                                   │'));
+      console.log(colors.primary('│ 🏷️  KEYWORDS:                                                       │'));
+      console.log(colors.primary('│   Keywords displayed under each result (top 5)                   │'));
+      console.log(colors.primary('│   keyword:term - Search conversations with specific keyword      │'));
+      console.log(colors.primary('│   Tab → Filters → Keywords to browse all keywords               │'));
+      console.log(colors.primary('│   Click keywords to filter results (in interactive mode)         │'));
       console.log(colors.primary('│                                                                   │'));
       console.log(colors.accent(`└───────────────────────────────────────────────────────────────────┘`));
       console.log(colors.dim('\nPress any key to continue...'));
