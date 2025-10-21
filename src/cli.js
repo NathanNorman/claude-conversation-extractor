@@ -2780,8 +2780,16 @@ async function main() {
       console.log(colors.info('\n🔨 Building search index from all exported markdown files...\n'));
       const indexOnlySpinner = ora('Building index with keyword extraction...').start();
 
-      // Build directly from markdown files using MiniSearchEngine
-      const indexOnlyEngine = new MiniSearchEngine({ exportDir: status.exportLocation });
+      // Build directly from markdown files using MiniSearchEngine (with silent logger for clean spinner)
+      const indexOnlyEngine = new MiniSearchEngine({
+        exportDir: status.exportLocation,
+        logger: {
+          info: (msg) => indexOnlySpinner.text = msg.replace('Extracting keywords from conversations...', 'Extracting keywords...').replace('Extracted keywords for', 'Extracted keywords from'),
+          warn: () => {},
+          error: (msg) => indexOnlySpinner.fail(msg),
+          debug: () => {}
+        }
+      });
       const indexOnlyStats = await indexOnlyEngine.buildIndex();
 
       indexOnlySpinner.succeed(colors.success(`✅ Index built with ${indexOnlyStats.totalConversations} conversations!`));
@@ -2801,8 +2809,16 @@ async function main() {
       console.log(colors.info('\n🔄 Rebuilding search index from all exported markdown files...\n'));
       const forceRebuildSpinner = ora('Building index with keyword extraction...').start();
 
-      // Build directly from markdown files using MiniSearchEngine
-      const forceRebuildEngine = new MiniSearchEngine({ exportDir: status.exportLocation });
+      // Build directly from markdown files using MiniSearchEngine (with silent logger for clean spinner)
+      const forceRebuildEngine = new MiniSearchEngine({
+        exportDir: status.exportLocation,
+        logger: {
+          info: (msg) => forceRebuildSpinner.text = msg.replace('Extracting keywords from conversations...', 'Extracting keywords...').replace('Extracted keywords for', 'Extracted keywords from'),
+          warn: () => {},
+          error: (msg) => forceRebuildSpinner.fail(msg),
+          debug: () => {}
+        }
+      });
       const forceRebuildStats = await forceRebuildEngine.buildIndex();
 
       forceRebuildSpinner.succeed(colors.success(`✅ Index rebuilt with ${forceRebuildStats.totalConversations} conversations!`));
