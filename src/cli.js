@@ -988,7 +988,7 @@ async function showLiveSearch(searchInterface = null) {
         const filterTypes = [
           { name: '📁 Filter by Repository', value: 'repo' },
           { name: '📅 Filter by Date Range', value: 'date' },
-          { name: '🏷️  Filter by Keyword', value: 'keyword' },
+          { name: '🏷️ Filter by Keyword', value: 'keyword' },
           { name: '🧹 Clear All Filters', value: 'clear' },
           { name: '← Back to Search', value: 'back' }
         ];

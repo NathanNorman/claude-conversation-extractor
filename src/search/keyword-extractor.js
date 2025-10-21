@@ -40,7 +40,7 @@
 
 import natural from 'natural';
 
-const { TfIdf, WordTokenizer } = natural;
+const { TfIdf, WordTokenizer, PorterStemmer } = natural;
 
 // Common stopwords to filter out (expanded list)
 const STOPWORDS = new Set([
@@ -81,7 +81,9 @@ const CODE_PATTERNS = [
   /^[_-]+$/,                      // Only underscores/hyphens
   /^https?:\/\//,                  // URLs
   /^[a-f0-9]{8,}$/,                // Hex IDs (likely UUIDs)
-  /^[A-Z_][A-Z0-9_]+$/             // CONSTANT_NAMES (often not meaningful)
+  /^[A-Z_][A-Z0-9_]+$/,            // CONSTANT_NAMES (often not meaningful)
+  /^\d+[a-z]$/,                    // Numbers with single letter suffix (34m, 33m, etc - ANSI codes)
+  /^[a-z]\d+$/                     // Single letter with numbers (m34, s12, etc)
 ];
 
 /**
@@ -160,13 +162,16 @@ export class KeywordExtractor {
 
   /**
    * Tokenize text and filter out stopwords and code syntax
+   * Also applies stemming to normalize plurals (conversation/conversations → convers)
    */
   tokenizeAndFilter(text) {
     // Tokenize
     const tokens = this.tokenizer.tokenize(text.toLowerCase());
 
-    // Filter out stopwords and code syntax
-    const filtered = tokens.filter(token => !shouldFilterTerm(token));
+    // Filter out stopwords and code syntax, then stem
+    const filtered = tokens
+      .filter(token => !shouldFilterTerm(token))
+      .map(token => PorterStemmer.stem(token));
 
     return filtered;
   }
