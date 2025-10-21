@@ -523,10 +523,14 @@ export class MiniSearchEngine {
         documents[i].keywordList = keywords;  // Store full keyword objects with scores
 
         // Update conversationData with keywords
-        const convData = this.conversationData.get(documents[i].id);
+        const docId = documents[i].id;
+        const convData = this.conversationData.get(docId);
         if (convData) {
           convData.keywords = keywords;
           convData.keywordString = documents[i].keywords;
+        } else {
+          // DEBUG: Log when conversationData doesn't have the document
+          this.logger.warn(`Could not find conversation ${docId} in conversationData for keyword update`);
         }
       }
 
@@ -604,11 +608,11 @@ export class MiniSearchEngine {
       searchOptions.limit = options.limit;
     }
 
-    // If query is empty but we have phrases, we need to get all documents for filtering
+    // If query is empty but we have phrases OR filters, we need to get all documents for filtering
     let results = [];
     try {
-      if (searchQuery.trim() === '' && phrases.length > 0) {
-        // Searching only for exact phrases - get all documents
+      if (searchQuery.trim() === '' && (phrases.length > 0 || searchOptions.filter)) {
+        // Searching only for exact phrases or filters - get all documents
         // Convert all conversationData to result format for filtering
         results = Array.from(this.conversationData.entries()).map(([id, _conv]) => ({
           id,
@@ -617,7 +621,7 @@ export class MiniSearchEngine {
           match: {}
         }));
       } else if (searchQuery.trim() === '') {
-        // Empty query with no phrases - return empty
+        // Empty query with no phrases or filters - return empty
         results = [];
       } else {
         // Normal search with query terms
@@ -670,6 +674,11 @@ export class MiniSearchEngine {
           return fullText.includes(phrase.toLowerCase());
         });
       });
+    }
+
+    // Apply keyword filter if specified (from parseQuery)
+    if (searchOptions.filter) {
+      results = results.filter(searchOptions.filter);
     }
     
     // Enrich results with full conversation data
