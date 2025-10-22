@@ -142,6 +142,11 @@ function extractHookExecutions(content) {
     }
   }
 
+  // Strip ANSI escape codes first (system messages contain formatting)
+  // Pattern: \u001b[XXm or \x1b[XXm
+  const ansiPattern = /\x1b\[[0-9;]*m/g;
+  text = text.replace(ansiPattern, '');
+
   // Primary pattern: [~/.claude/hooks/hookname.sh]
   // This appears in both user messages (hook feedback) and system reminders
   const hookFilePattern = /\[~?\/?\.?claude\/hooks\/([\w-]+)\.sh\]/g;
@@ -152,8 +157,8 @@ function extractHookExecutions(content) {
   }
 
   // Also match PreToolUse and PostToolUse patterns
-  // Pattern: [PreToolUse:ToolName] or [PostToolUse:ToolName] followed by [~/.claude/hooks/...]
-  const toolUseHookPattern = /\[(Pre|Post)ToolUse:[^\]]+\]\s*\[~?\/?\.?claude\/hooks\/([\w-]+)\.sh\]/g;
+  // Pattern: PreToolUse:ToolName [~/.claude/hooks/...] (with or without brackets around Pre/Post)
+  const toolUseHookPattern = /(?:\[)?(Pre|Post)ToolUse:[^\]]+(?:\])?\s*\[~?\/?\.?claude\/hooks\/([\w-]+)\.sh\]/g;
   while ((match = toolUseHookPattern.exec(text)) !== null) {
     hooks.push(match[2]); // Hook name
   }

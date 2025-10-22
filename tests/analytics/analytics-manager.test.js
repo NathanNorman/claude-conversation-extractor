@@ -33,7 +33,7 @@ describe('AnalyticsManager', () => {
     test('should initialize successfully', async () => {
       await manager.initialize();
       expect(manager.cache).toBeDefined();
-      expect(manager.cache.version).toBe(2);
+      expect(manager.cache.version).toBe(3); // Updated to v3 for turn-based counting
     });
 
     test('should create cache directory if missing', async () => {
@@ -76,7 +76,7 @@ describe('AnalyticsManager', () => {
       await manager2.initialize();
 
       // Should create new cache instead of loading invalid one
-      expect(manager2.cache.version).toBe(2);
+      expect(manager2.cache.version).toBe(3); // Updated to v3 for turn-based counting
       expect(manager2.cache.overview).toBeDefined();
     });
 

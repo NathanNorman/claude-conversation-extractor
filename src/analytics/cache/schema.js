@@ -7,8 +7,9 @@
 
 /**
  * Current cache version
+ * v3: Added turn-based message counting (userTurns, assistantTurns, totalTurns)
  */
-export const CACHE_VERSION = 2;
+export const CACHE_VERSION = 3;
 
 /**
  * Creates an empty analytics cache with default values
@@ -22,7 +23,10 @@ export function createEmptyCache() {
 
     overview: {
       totalConversations: 0,
-      totalMessages: 0,
+      totalMessages: 0, // Legacy: JSONL entries
+      totalUserTurns: 0, // NEW v3: Actual user "enter" presses
+      totalAssistantTurns: 0, // NEW v3: Actual assistant responses
+      totalTurns: 0, // NEW v3: Total conversational exchanges
       totalToolInvocations: 0,
       dateRange: {
         first: null,
@@ -32,8 +36,12 @@ export function createEmptyCache() {
     },
 
     conversationStats: {
-      avgMessagesPerConversation: 0,
-      medianMessagesPerConversation: 0,
+      avgMessagesPerConversation: 0, // Legacy
+      avgTurnsPerConversation: 0, // NEW v3
+      avgUserTurnsPerConversation: 0, // NEW v3
+      avgAssistantTurnsPerConversation: 0, // NEW v3
+      medianMessagesPerConversation: 0, // Legacy
+      medianTurnsPerConversation: 0, // NEW v3
       avgDurationMinutes: 0,
       longestConversation: null,
       byProject: {}
@@ -198,6 +206,41 @@ export function migrateCache(oldCache) {
     if (oldCache.conversationStats) {
       newCache.conversationStats = { ...newCache.conversationStats, ...oldCache.conversationStats };
     }
+  }
+
+  // Migrate from version 2 to version 3
+  if (oldCache.version === 2) {
+    // Copy over all compatible fields from v2
+    if (oldCache.overview) {
+      newCache.overview = { ...newCache.overview, ...oldCache.overview };
+      // New fields (totalUserTurns, totalAssistantTurns, totalTurns) will use defaults from createEmptyCache
+    }
+    if (oldCache.conversationStats) {
+      newCache.conversationStats = { ...newCache.conversationStats, ...oldCache.conversationStats };
+      // New fields (avgTurnsPerConversation, etc.) will use defaults from createEmptyCache
+    }
+    if (oldCache.timePatterns) {
+      newCache.timePatterns = oldCache.timePatterns;
+    }
+    if (oldCache.toolUsage) {
+      newCache.toolUsage = oldCache.toolUsage;
+    }
+    if (oldCache.contentAnalysis) {
+      newCache.contentAnalysis = oldCache.contentAnalysis;
+    }
+    if (oldCache.productivityMetrics) {
+      newCache.productivityMetrics = oldCache.productivityMetrics;
+    }
+    if (oldCache.milestones) {
+      newCache.milestones = oldCache.milestones;
+    }
+    if (oldCache.userActions) {
+      newCache.userActions = oldCache.userActions;
+    }
+    if (oldCache.keywords) {
+      newCache.keywords = oldCache.keywords;
+    }
+    // Note: Cache will be marked as needing rebuild since turn counts are 0
   }
 
   return newCache;

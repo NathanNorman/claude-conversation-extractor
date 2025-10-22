@@ -260,7 +260,14 @@ export async function showAnalytics(status) {
     // Overview from cache
     analyticsLines.push(colors.info('📈 Your Coding Activity:'));
     analyticsLines.push(`  Total Conversations: ${colors.accent(cache.overview.totalConversations)}`);
-    analyticsLines.push(`  Total Messages: ${colors.accent(cache.overview.totalMessages.toLocaleString())}`);
+
+    // Show turn-based counts (NEW in v3)
+    if (cache.overview.totalTurns !== undefined && cache.overview.totalTurns > 0) {
+      analyticsLines.push(`  Total Messages: ${colors.accent(cache.overview.totalTurns.toLocaleString())}`);
+    } else {
+      // Fallback to legacy JSONL count
+      analyticsLines.push(`  Total Messages: ${colors.accent(cache.overview.totalMessages.toLocaleString())}`);
+    }
 
     if (cache.overview.dateRange && cache.overview.dateRange.first) {
       const firstDate = new Date(cache.overview.dateRange.first);
@@ -273,8 +280,16 @@ export async function showAnalytics(status) {
 
     // Conversation Stats
     analyticsLines.push(colors.info('💬 Conversation Stats:'));
-    analyticsLines.push(`  Avg Messages/Conv: ${colors.accent(cache.conversationStats.avgMessagesPerConversation.toFixed(1))}`);
-    analyticsLines.push(`  Median Messages: ${colors.accent(cache.conversationStats.medianMessagesPerConversation)}`);
+
+    // Show turn-based averages (NEW in v3)
+    if (cache.conversationStats.avgTurnsPerConversation !== undefined) {
+      analyticsLines.push(`  Avg Messages/Conv: ${colors.accent(cache.conversationStats.avgTurnsPerConversation.toFixed(1))}`);
+      analyticsLines.push(`  Median Messages: ${colors.accent(Math.round(cache.conversationStats.medianTurnsPerConversation || 0))}`);
+    } else {
+      // Fallback to legacy counts
+      analyticsLines.push(`  Avg Messages/Conv: ${colors.accent(cache.conversationStats.avgMessagesPerConversation.toFixed(1))}`);
+      analyticsLines.push(`  Median Messages: ${colors.accent(cache.conversationStats.medianMessagesPerConversation)}`);
+    }
 
     if (cache.conversationStats.longestConversation) {
       const longest = cache.conversationStats.longestConversation;
@@ -294,7 +309,9 @@ export async function showAnalytics(status) {
         projectName = '~ (home)';
       }
 
-      analyticsLines.push(`  Longest Conversation: ${colors.accent(longest.messages)} messages ${colors.dim(`(${projectName})`)}`);
+      // Show turn-based count (NEW in v3)
+      const messageCount = longest.turns !== undefined ? longest.turns : longest.messages;
+      analyticsLines.push(`  Longest Conversation: ${colors.accent(messageCount)} messages ${colors.dim(`(${projectName})`)}`);
     }
 
     analyticsLines.push('');

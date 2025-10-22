@@ -90,12 +90,13 @@ function calculateConversationsPerWeek(conversations, dateRange) {
  * Calculate messages per day
  * @param {Array<Object>} conversations - Conversations
  * @param {Object} dateRange - Date range
- * @returns {number} Messages per day
+ * @returns {number} Messages per day (using turn-based counts)
  */
 function calculateMessagesPerDay(conversations, dateRange) {
   if (dateRange.spanDays === 0) return 0;
 
-  const totalMessages = conversations.reduce((sum, conv) => sum + (conv.messageCount || 0), 0);
+  // Use turn-based counts (v3), fallback to legacy messageCount
+  const totalMessages = conversations.reduce((sum, conv) => sum + (conv.totalTurns || conv.messageCount || 0), 0);
   return parseFloat((totalMessages / dateRange.spanDays).toFixed(1));
 }
 

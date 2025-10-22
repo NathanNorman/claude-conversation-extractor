@@ -72,6 +72,12 @@ export async function parseConversation(filePath) {
   let firstTimestamp = null;
   let lastTimestamp = null;
 
+  // Track conversational turns
+  let userTurns = 0; // Actual user "enter" presses (text + image)
+  let assistantTurns = 0; // Actual assistant responses (grouped consecutive entries)
+  let inAssistantTurn = false; // Track if we're in a consecutive assistant group
+  let previousType = null; // Track type transitions
+
   try {
     const fileStream = createReadStream(filePath);
     const rl = createInterface({
@@ -98,7 +104,7 @@ export async function parseConversation(filePath) {
           }
         }
 
-        // Collect message info
+        // Collect message info (keep for backward compatibility)
         if (entry.message) {
           messages.push({
             role: entry.message.role,
@@ -106,6 +112,30 @@ export async function parseConversation(filePath) {
             content: entry.message.content
           });
         }
+
+        // Count actual conversational turns
+        const entryType = entry.type;
+        if (entryType === 'user' && entry.message && entry.message.content && entry.message.content.length > 0) {
+          const contentType = entry.message.content[0].type;
+          // Count only text and image messages (exclude tool_result - those are automatic)
+          if (contentType === 'text' || contentType === 'image') {
+            userTurns++;
+          }
+
+          // End any previous assistant turn
+          if (inAssistantTurn) {
+            inAssistantTurn = false;
+          }
+        } else if (entryType === 'assistant' && entry.message) {
+          // Start a new assistant turn if not already in one
+          if (!inAssistantTurn) {
+            assistantTurns++;
+            inAssistantTurn = true;
+          }
+          // Otherwise, we're continuing the same assistant turn (consecutive entries)
+        }
+
+        previousType = entryType;
 
         // Track tool invocations
         if (entry.type === 'tool_use' || entry.type === 'tool_result') {
@@ -136,7 +166,10 @@ export async function parseConversation(filePath) {
     firstTimestamp: firstTimestamp?.toISOString() || null,
     lastTimestamp: lastTimestamp?.toISOString() || null,
     durationMs,
-    messageCount: messages.length,
+    messageCount: messages.length, // Legacy: JSONL entries with .message field
+    userTurns, // NEW: Actual user "enter" presses
+    assistantTurns, // NEW: Actual assistant responses (grouped)
+    totalTurns: userTurns + assistantTurns, // NEW: Total conversational exchanges
     toolCount: toolInvocations.length
   };
 }
@@ -161,7 +194,10 @@ export async function analyzeAllConversations(projectsDir, sinceTimestamp = null
   const results = {
     totalConversations: conversations.length,
     analyzedConversations: conversationsToAnalyze.length,
-    totalMessages: 0,
+    totalMessages: 0, // Legacy: JSONL entries
+    totalUserTurns: 0, // NEW: Actual user messages
+    totalAssistantTurns: 0, // NEW: Actual assistant responses
+    totalTurns: 0, // NEW: Total conversational exchanges
     totalToolInvocations: 0,
     conversations: [],
     byProject: {},
@@ -176,7 +212,10 @@ export async function analyzeAllConversations(projectsDir, sinceTimestamp = null
         project: conv.project,
         fileName: conv.fileName,
         filePath: conv.filePath, // Include for tool/content analysis
-        messageCount: data.messageCount,
+        messageCount: data.messageCount, // Legacy
+        userTurns: data.userTurns, // NEW
+        assistantTurns: data.assistantTurns, // NEW
+        totalTurns: data.totalTurns, // NEW
         toolCount: data.toolCount,
         durationMs: data.durationMs,
         firstTimestamp: data.firstTimestamp,
@@ -184,19 +223,28 @@ export async function analyzeAllConversations(projectsDir, sinceTimestamp = null
       };
 
       results.conversations.push(conversationInfo);
-      results.totalMessages += data.messageCount;
+      results.totalMessages += data.messageCount; // Legacy
+      results.totalUserTurns += data.userTurns; // NEW
+      results.totalAssistantTurns += data.assistantTurns; // NEW
+      results.totalTurns += data.totalTurns; // NEW
       results.totalToolInvocations += data.toolCount;
 
       // Aggregate by project
       if (!results.byProject[conv.project]) {
         results.byProject[conv.project] = {
           count: 0,
-          messages: 0,
+          messages: 0, // Legacy
+          userTurns: 0, // NEW
+          assistantTurns: 0, // NEW
+          totalTurns: 0, // NEW
           tools: 0
         };
       }
       results.byProject[conv.project].count += 1;
-      results.byProject[conv.project].messages += data.messageCount;
+      results.byProject[conv.project].messages += data.messageCount; // Legacy
+      results.byProject[conv.project].userTurns += data.userTurns; // NEW
+      results.byProject[conv.project].assistantTurns += data.assistantTurns; // NEW
+      results.byProject[conv.project].totalTurns += data.totalTurns; // NEW
       results.byProject[conv.project].tools += data.toolCount;
 
       // Track timestamps for date range
@@ -224,7 +272,10 @@ export async function analyzeAllConversations(projectsDir, sinceTimestamp = null
 
   // Calculate averages
   if (results.analyzedConversations > 0) {
-    results.avgMessagesPerConversation = results.totalMessages / results.analyzedConversations;
+    results.avgMessagesPerConversation = results.totalMessages / results.analyzedConversations; // Legacy
+    results.avgTurnsPerConversation = results.totalTurns / results.analyzedConversations; // NEW
+    results.avgUserTurnsPerConversation = results.totalUserTurns / results.analyzedConversations; // NEW
+    results.avgAssistantTurnsPerConversation = results.totalAssistantTurns / results.analyzedConversations; // NEW
     results.avgToolsPerConversation = results.totalToolInvocations / results.analyzedConversations;
   }
 
@@ -252,7 +303,10 @@ function calculateDaySpan(date1, date2) {
 export async function updateCacheWithAnalysis(cache, analysis) {
   // Update overview
   cache.overview.totalConversations = analysis.totalConversations;
-  cache.overview.totalMessages = analysis.totalMessages;
+  cache.overview.totalMessages = analysis.totalMessages; // Legacy
+  cache.overview.totalUserTurns = analysis.totalUserTurns; // NEW
+  cache.overview.totalAssistantTurns = analysis.totalAssistantTurns; // NEW
+  cache.overview.totalTurns = analysis.totalTurns; // NEW
   cache.overview.totalToolInvocations = analysis.totalToolInvocations;
 
   if (analysis.dateRange) {
@@ -260,28 +314,44 @@ export async function updateCacheWithAnalysis(cache, analysis) {
   }
 
   // Update conversation stats
-  cache.conversationStats.avgMessagesPerConversation = analysis.avgMessagesPerConversation || 0;
+  cache.conversationStats.avgMessagesPerConversation = analysis.avgMessagesPerConversation || 0; // Legacy
+  cache.conversationStats.avgTurnsPerConversation = analysis.avgTurnsPerConversation || 0; // NEW
+  cache.conversationStats.avgUserTurnsPerConversation = analysis.avgUserTurnsPerConversation || 0; // NEW
+  cache.conversationStats.avgAssistantTurnsPerConversation = analysis.avgAssistantTurnsPerConversation || 0; // NEW
 
-  // Calculate median
+  // Calculate median for turns (NEW)
   if (analysis.conversations.length > 0) {
+    // Legacy: Keep message count median for compatibility
     const messageCounts = analysis.conversations
       .map(c => c.messageCount)
       .sort((a, b) => a - b);
-    const mid = Math.floor(messageCounts.length / 2);
+    const midMsg = Math.floor(messageCounts.length / 2);
     cache.conversationStats.medianMessagesPerConversation = messageCounts.length % 2 === 0
-      ? (messageCounts[mid - 1] + messageCounts[mid]) / 2
-      : messageCounts[mid];
+      ? (messageCounts[midMsg - 1] + messageCounts[midMsg]) / 2
+      : messageCounts[midMsg];
+
+    // NEW: Calculate median for turns
+    const turnCounts = analysis.conversations
+      .map(c => c.totalTurns)
+      .sort((a, b) => a - b);
+    const midTurn = Math.floor(turnCounts.length / 2);
+    cache.conversationStats.medianTurnsPerConversation = turnCounts.length % 2 === 0
+      ? (turnCounts[midTurn - 1] + turnCounts[midTurn]) / 2
+      : turnCounts[midTurn];
   }
 
-  // Find longest conversation
+  // Find longest conversation (by turns, not JSONL entries)
   if (analysis.conversations.length > 0) {
     const longest = analysis.conversations.reduce((max, conv) =>
-      conv.messageCount > (max?.messageCount || 0) ? conv : max
+      conv.totalTurns > (max?.totalTurns || 0) ? conv : max
     );
     cache.conversationStats.longestConversation = {
       project: longest.project,
       fileName: longest.fileName,
-      messages: longest.messageCount,
+      messages: longest.messageCount, // Legacy
+      turns: longest.totalTurns, // NEW
+      userTurns: longest.userTurns, // NEW
+      assistantTurns: longest.assistantTurns, // NEW
       duration: longest.durationMs
     };
   }
@@ -291,8 +361,12 @@ export async function updateCacheWithAnalysis(cache, analysis) {
   for (const [project, stats] of Object.entries(analysis.byProject)) {
     cache.conversationStats.byProject[project] = {
       count: stats.count,
-      avgMessages: stats.messages / stats.count,
-      totalMessages: stats.messages
+      avgMessages: stats.messages / stats.count, // Legacy
+      avgTurns: stats.totalTurns / stats.count, // NEW
+      totalMessages: stats.messages, // Legacy
+      totalTurns: stats.totalTurns, // NEW
+      totalUserTurns: stats.userTurns, // NEW
+      totalAssistantTurns: stats.assistantTurns // NEW
     };
   }
 

@@ -44,6 +44,16 @@ export async function parseConversationForTools(filePath) {
             timestamp: entry.timestamp
           });
         }
+
+        // Also store system messages (for hook detection)
+        if (entry.type === 'system' && entry.content) {
+          messages.push({
+            role: 'system',
+            content: entry.content,
+            timestamp: entry.timestamp,
+            subtype: entry.subtype
+          });
+        }
       } catch (parseError) {
         // Skip malformed lines
         continue;

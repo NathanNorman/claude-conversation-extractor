@@ -44,7 +44,7 @@ describe('Analytics Exporters', () => {
       const exported = JSON.parse(content);
 
       expect(exported.exportedAt).toBeDefined();
-      expect(exported.version).toBe(2);
+      expect(exported.version).toBe(3); // Updated to v3 for turn-based counting
       expect(exported.data.overview.totalConversations).toBe(100);
     });
 
