@@ -93,7 +93,12 @@ const CODE_PATTERNS = [
   /^[a-z]+\d+[a-z]*$/,             // Letters with numbers (m34, s12, gb8, mb255, 2m1)
   /^\d+(st|nd|rd|th)$/,            // Ordinals (1st, 2nd, 3rd, 4th)
   /__/,                            // Contains double underscore (mcp__mcp, __dirname)
-  /^\d+[a-z]*\d+$/                 // Mixed digit patterns (2m1, 3x4, 10k5)
+  /^\d+[a-z]*\d+$/,                // Mixed digit patterns (2m1, 3x4, 10k5)
+  /^req_[a-z0-9]+$/i,              // Request IDs (req_011csjmuaapwko6uzvs8axpa)
+  /^toolu_[a-z0-9]+$/i,            // Tool IDs (toolu_018dcej5aithj57xii7qtoxq)
+  /^[a-z0-9]{20,}$/i,              // Very long alphanumeric strings (tokens, hashes)
+  /^[a-f0-9]{4}$/,                 // Short hex codes (4c5a, c5c3, 8c5e)
+  /^[0-9][a-z][0-9]+[a-z]+$/       // Number-letter-number patterns (2m912k)
 ];
 
 /**

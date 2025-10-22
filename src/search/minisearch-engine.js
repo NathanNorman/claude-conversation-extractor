@@ -190,11 +190,24 @@ export class MiniSearchEngine {
     }
 
     // Extract message content (everything between ## headers)
+    // Skip code blocks to exclude tool usage, hook output, etc.
     let currentMessage = null;
     let messageContent = '';
+    let fullTextContent = ''; // For keywords - excludes code blocks
     const parsedMessages = [];
+    let inCodeBlock = false;
 
     for (const line of lines) {
+      // Track code block boundaries
+      if (line.startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+        // Include in message content but not in fullText (for keywords)
+        if (currentMessage) {
+          messageContent += line + '\n';
+        }
+        continue;
+      }
+
       if (line.startsWith('## 👤') || line.startsWith('## 🤖')) {
         // Save previous message if exists
         if (currentMessage && messageContent.trim()) {
@@ -202,15 +215,19 @@ export class MiniSearchEngine {
             speaker: currentMessage,
             content: messageContent.trim()
           });
-          conversation.fullText += ' ' + messageContent.trim();
         }
 
         // Start new message
         currentMessage = line.includes('👤') ? 'user' : 'assistant';
         messageContent = '';
       } else if (currentMessage && !line.startsWith('---')) {
-        // Accumulate message content
+        // Accumulate message content (includes code blocks)
         messageContent += line + '\n';
+
+        // Only add to fullText if not in code block (for keyword extraction)
+        if (!inCodeBlock) {
+          fullTextContent += ' ' + line;
+        }
       }
     }
 
@@ -220,10 +237,10 @@ export class MiniSearchEngine {
         speaker: currentMessage,
         content: messageContent.trim()
       });
-      conversation.fullText += ' ' + messageContent.trim();
     }
 
     conversation.messages = parsedMessages;
+    conversation.fullText = fullTextContent.trim();
 
     // Calculate word count
     conversation.wordCount = conversation.fullText.split(/\s+/).length;
