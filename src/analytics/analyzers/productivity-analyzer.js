@@ -28,7 +28,7 @@ export function analyzeProductivity(conversations, timePatterns, toolUsage) {
   const toolsPerConversation = totalConversations > 0 ? totalTools / totalConversations : 0;
 
   // Calculate session metrics
-  const { avgSessionLength, deepWorkSessions, quickQuestions } = classifyConversations(conversations);
+  const { deepWorkSessions, quickQuestions } = classifyConversations(conversations);
 
   // Calculate weekend activity
   const weekendActivity = calculateWeekendActivity(timePatterns);
@@ -37,7 +37,6 @@ export function analyzeProductivity(conversations, timePatterns, toolUsage) {
     conversationsPerWeek,
     messagesPerDay,
     toolsPerConversation: parseFloat(toolsPerConversation.toFixed(1)),
-    avgSessionLength: Math.round(avgSessionLength),
     deepWorkSessions,
     quickQuestions,
     weekendActivity: parseFloat(weekendActivity.toFixed(3))
@@ -46,6 +45,8 @@ export function analyzeProductivity(conversations, timePatterns, toolUsage) {
 
 /**
  * Calculate date range from conversations
+ * Note: This computes the actual span of conversations in the dataset,
+ * which may differ from the requested filter range
  * @param {Array<Object>} conversations - Conversations
  * @returns {Object} Date range info
  */
@@ -106,7 +107,6 @@ function calculateMessagesPerDay(conversations, dateRange) {
  * @returns {Object} Classification results
  */
 function classifyConversations(conversations) {
-  let totalDuration = 0;
   let deepWorkSessions = 0;
   let quickQuestions = 0;
 
@@ -116,7 +116,6 @@ function classifyConversations(conversations) {
 
   for (const conv of conversations) {
     const duration = conv.durationMs || 0;
-    totalDuration += duration;
 
     if (duration >= DEEP_WORK_THRESHOLD) {
       deepWorkSessions++;
@@ -125,12 +124,7 @@ function classifyConversations(conversations) {
     }
   }
 
-  const avgSessionLength = conversations.length > 0
-    ? totalDuration / conversations.length / 1000 // Convert to seconds
-    : 0;
-
   return {
-    avgSessionLength,
     deepWorkSessions,
     quickQuestions
   };
@@ -162,7 +156,6 @@ function createEmptyProductivityMetrics() {
     conversationsPerWeek: 0,
     messagesPerDay: 0,
     toolsPerConversation: 0,
-    avgSessionLength: 0,
     deepWorkSessions: 0,
     quickQuestions: 0,
     weekendActivity: 0

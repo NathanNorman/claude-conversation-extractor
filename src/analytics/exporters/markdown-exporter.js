@@ -30,6 +30,23 @@ export async function exportToMarkdown(cache, options = {}) {
   // Header
   lines.push('# Claude Conversation Analytics Report');
   lines.push('');
+
+  // NEW: Add date range to header
+  if (cache.dateRange) {
+    const { formatDateRangeLabel } = await import('../utils/date-range-helper.js');
+    const dateLabel = formatDateRangeLabel(
+      cache.dateRange.start ? new Date(cache.dateRange.start) : null,
+      cache.dateRange.end ? new Date(cache.dateRange.end) : null
+    );
+
+    lines.push(`**Period**: ${cache.dateRange.label}`);
+    if (cache.dateRange.isFiltered) {
+      lines.push(`**Date Range**: ${dateLabel}`);
+    }
+  } else {
+    lines.push('**Period**: All Time');
+  }
+
   lines.push(`**Generated**: ${new Date().toLocaleString()}`);
   lines.push('');
   lines.push('---');
@@ -94,6 +111,11 @@ function generateOverviewSection(cache) {
   const lines = [];
   lines.push('## 📊 Overview');
   lines.push('');
+
+  if (cache.dateRange && cache.dateRange.isFiltered) {
+    lines.push(`*Statistics for ${cache.dateRange.label}*`);
+    lines.push('');
+  }
 
   if (cache.overview) {
     lines.push(`- **Total Conversations**: ${formatNumber(cache.overview.totalConversations)}`);
@@ -250,7 +272,6 @@ function generateProductivitySection(cache) {
 
     lines.push('### Session Analysis');
     lines.push('');
-    lines.push(`- **Average Session Length**: ${Math.floor(pm.avgSessionLength / 60)} minutes`);
     lines.push(`- **Deep Work Sessions**: ${pm.deepWorkSessions} (>30 minutes)`);
     lines.push(`- **Quick Questions**: ${pm.quickQuestions} (<5 minutes)`);
     lines.push('');

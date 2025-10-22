@@ -2721,6 +2721,21 @@ async function main() {
     return await runAutomatedSearch(args);
   }
 
+  // Detect non-interactive environment (CI, testing, piped input)
+  if (!process.stdin.isTTY || process.env.CI) {
+    console.log(colors.info('Claude Conversation Extractor'));
+    console.log(colors.dim('Interactive mode requires a TTY terminal.\n'));
+    console.log(colors.primary('Usage:'));
+    console.log('  claude-logs                           # Interactive mode');
+    console.log('  claude-logs --search "query"          # Search conversations');
+    console.log('  claude-logs --json                    # JSON output');
+    console.log('  claude-logs --filter-repo project     # Filter by repo');
+    console.log('  claude-logs --filter-date last_week   # Filter by date');
+    console.log('  claude-logs --keyword typescript      # Filter by keyword\n');
+    console.log(colors.dim('For more options, run in an interactive terminal.'));
+    process.exit(0);
+  }
+
   console.clear();
 
   logger.infoSync('Claude Conversation Extractor started');

@@ -10,6 +10,7 @@
  */
 
 import { parseConversationForTools } from './tool-parser.js';
+import { readFile } from 'fs/promises';
 
 // Built-in Claude Code commands to exclude (not user-created)
 const BUILTIN_COMMANDS = new Set([
@@ -28,6 +29,57 @@ const BUILTIN_COMMANDS = new Set([
 ]);
 
 /**
+ * Parse markdown file for user actions (hooks, slash commands)
+ * @param {string} markdownPath - Path to markdown file
+ * @returns {Promise<Object>} Messages with content
+ */
+async function parseMarkdownForUserActions(markdownPath) {
+  const content = await readFile(markdownPath, 'utf-8');
+  const lines = content.split('\n');
+
+  const messages = [];
+  let currentRole = null;
+  let messageContent = '';
+
+  for (const line of lines) {
+    if (line.startsWith('## 👤 Human') || line.startsWith('## Human')) {
+      // Save previous message if exists
+      if (currentRole && messageContent.trim()) {
+        messages.push({
+          role: currentRole,
+          content: messageContent.trim()
+        });
+      }
+      currentRole = 'user';
+      messageContent = '';
+    } else if (line.startsWith('## 🤖 Assistant') || line.startsWith('## Assistant')) {
+      // Save previous message if exists
+      if (currentRole && messageContent.trim()) {
+        messages.push({
+          role: currentRole,
+          content: messageContent.trim()
+        });
+      }
+      currentRole = 'assistant';
+      messageContent = '';
+    } else if (currentRole && !line.startsWith('---')) {
+      // Accumulate message content
+      messageContent += line + '\n';
+    }
+  }
+
+  // Save last message
+  if (currentRole && messageContent.trim()) {
+    messages.push({
+      role: currentRole,
+      content: messageContent.trim()
+    });
+  }
+
+  return { messages };
+}
+
+/**
  * Analyze user actions from conversations
  * @param {Array<Object>} conversations - Conversations with file paths
  * @returns {Promise<Object>} User action analysis
@@ -42,9 +94,20 @@ export async function analyzeUserActions(conversations) {
     if (!conv.filePath) continue;
 
     try {
-      const data = await parseConversationForTools(conv.filePath);
+      let messageData;
 
-      for (const msg of data.messages) {
+      // Handle both JSONL and markdown files
+      if (conv.filePath.endsWith('.jsonl')) {
+        // Parse JSONL format
+        messageData = await parseConversationForTools(conv.filePath);
+      } else if (conv.filePath.endsWith('.md')) {
+        // Parse markdown format
+        messageData = await parseMarkdownForUserActions(conv.filePath);
+      } else {
+        continue;
+      }
+
+      for (const msg of messageData.messages) {
         // Extract slash commands from user messages
         if (msg.role === 'user' && msg.content) {
           const commands = extractSlashCommands(msg.content);
@@ -57,7 +120,7 @@ export async function analyzeUserActions(conversations) {
           }
         }
 
-        // Extract hook executions from system messages
+        // Extract hook executions from all message types
         const hooks = extractHookExecutions(msg.content);
         for (const hook of hooks) {
           hookExecutions[hook] = (hookExecutions[hook] || 0) + 1;

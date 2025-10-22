@@ -9,6 +9,7 @@ import { createReadStream } from 'fs';
 import { readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { createInterface } from 'readline';
+import { isConversationInRange } from '../utils/date-range-helper.js';
 
 /**
  * Discover all JSONL conversation files
@@ -59,6 +60,47 @@ export async function discoverConversations(projectsDir) {
   }
 
   return conversations;
+}
+
+/**
+ * Load conversations from search index (includes archived conversations)
+ * @returns {Promise<Array<Object>>} Array of conversation metadata from index
+ */
+export async function loadConversationsFromSearchIndex() {
+  try {
+    const { MiniSearchEngine } = await import('../../search/minisearch-engine.js');
+    const searchEngine = new MiniSearchEngine();
+
+    // Try to load existing index
+    const loaded = await searchEngine.loadIndex();
+    if (!loaded || !searchEngine.conversationData || searchEngine.conversationData.size === 0) {
+      return null; // Index not available or empty
+    }
+
+    // Convert conversationData Map to array of conversation objects
+    const conversations = [];
+    for (const [id, data] of searchEngine.conversationData) {
+      conversations.push({
+        id,
+        project: data.rawProject || data.project,
+        fileName: data.exportedFile || data.originalPath,
+        filePath: data.originalPath || data.exportedFile,
+        messageCount: data.messageCount || 0,
+        userTurns: data.userTurns || 0,
+        assistantTurns: data.assistantTurns || 0,
+        totalTurns: data.totalTurns || 0,
+        toolCount: data.toolCount || 0,
+        firstTimestamp: data.firstTimestamp || data.modified,
+        lastTimestamp: data.lastTimestamp || data.modified,
+        durationMs: data.durationMs || 0
+      });
+    }
+
+    return conversations;
+  } catch (error) {
+    console.warn('Failed to load from search index:', error.message);
+    return null;
+  }
 }
 
 /**
@@ -178,22 +220,36 @@ export async function parseConversation(filePath) {
  * Analyze all conversations and compute basic metrics
  * @param {string} projectsDir - Path to projects directory
  * @param {string} sinceTimestamp - Optional: only analyze conversations after this time
+ * @param {Object} dateRange - Optional: date range filter { label, start, end, isFiltered }
  * @returns {Promise<Object>} Analysis results
  */
-export async function analyzeAllConversations(projectsDir, sinceTimestamp = null) {
-  const conversations = await discoverConversations(projectsDir);
+export async function analyzeAllConversations(projectsDir, sinceTimestamp = null, dateRange = null) {
+  // Try to load from search index first (includes archived conversations)
+  let conversations = await loadConversationsFromSearchIndex();
 
-  // Filter by timestamp if provided
+  if (conversations && conversations.length > 0) {
+    console.log(`Using search index with ${conversations.length} conversations (includes archives)`);
+  } else {
+    // Fallback to JSONL discovery (only live conversations)
+    console.log('Search index not available, falling back to JSONL files');
+    conversations = await discoverConversations(projectsDir);
+  }
+
+  // Filter by timestamp if provided (incremental updates)
   let conversationsToAnalyze = conversations;
   if (sinceTimestamp) {
     const since = new Date(sinceTimestamp);
-    conversationsToAnalyze = conversations.filter(c => c.mtime > since);
+    conversationsToAnalyze = conversations.filter(c => {
+      const mtime = c.mtime || (c.lastTimestamp ? new Date(c.lastTimestamp) : null);
+      return mtime && mtime > since;
+    });
   }
 
   // Parse all conversations
   const results = {
     totalConversations: conversations.length,
     analyzedConversations: conversationsToAnalyze.length,
+    appliedDateRange: dateRange || null, // Track what filter was applied
     totalMessages: 0, // Legacy: JSONL entries
     totalUserTurns: 0, // NEW: Actual user messages
     totalAssistantTurns: 0, // NEW: Actual assistant responses
@@ -206,11 +262,41 @@ export async function analyzeAllConversations(projectsDir, sinceTimestamp = null
 
   for (const conv of conversationsToAnalyze) {
     try {
-      const data = await parseConversation(conv.filePath);
+      let data;
+
+      // If conversation already has analytics metadata (from search index), use it
+      if (conv.firstTimestamp && conv.totalTurns !== undefined) {
+        // Data from search index - already parsed
+        data = {
+          messageCount: conv.messageCount || 0,
+          userTurns: conv.userTurns || 0,
+          assistantTurns: conv.assistantTurns || 0,
+          totalTurns: conv.totalTurns || 0,
+          toolCount: conv.toolCount || 0,
+          firstTimestamp: conv.firstTimestamp,
+          lastTimestamp: conv.lastTimestamp,
+          durationMs: conv.durationMs || 0
+        };
+      } else {
+        // Need to parse JSONL file
+        data = await parseConversation(conv.filePath);
+      }
+
+      // Apply date range filter if specified
+      if (dateRange && dateRange.isFiltered) {
+        const conversationObj = {
+          firstTimestamp: data.firstTimestamp,
+          lastTimestamp: data.lastTimestamp
+        };
+
+        if (!isConversationInRange(conversationObj, dateRange)) {
+          continue; // Skip this conversation
+        }
+      }
 
       const conversationInfo = {
         project: conv.project,
-        fileName: conv.fileName,
+        fileName: conv.fileName || conv.id,
         filePath: conv.filePath, // Include for tool/content analysis
         messageCount: data.messageCount, // Legacy
         userTurns: data.userTurns, // NEW
@@ -259,6 +345,9 @@ export async function analyzeAllConversations(projectsDir, sinceTimestamp = null
       console.warn(`Failed to analyze ${conv.filePath}:`, error.message);
     }
   }
+
+  // Update analyzedConversations count to reflect actual analyzed count after date filtering
+  results.analyzedConversations = results.conversations.length;
 
   // Calculate date range
   if (results.timestamps.length > 0) {

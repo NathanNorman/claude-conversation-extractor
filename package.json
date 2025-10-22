@@ -1,6 +1,6 @@
 {
   "name": "claude-conversation-extractor",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Search, browse, and export Claude Code conversation history with interactive live search, MiniSearch fuzzy matching, and archived conversation support",
   "main": "src/index.js",
   "type": "module",

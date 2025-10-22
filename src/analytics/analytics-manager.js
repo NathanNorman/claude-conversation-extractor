@@ -10,6 +10,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createEmptyCache, validateCache, migrateCache, CACHE_VERSION } from './cache/schema.js';
 import { analyzeKeywords } from './analyzers/keyword-analyzer.js';
+import { calculateDateRange } from './utils/date-range-helper.js';
 
 export class AnalyticsManager {
   constructor(options = {}) {
@@ -327,5 +328,98 @@ export class AnalyticsManager {
     }
 
     return this.cache;
+  }
+
+  /**
+   * Get analytics for a specific date range
+   * @param {string} period - Date range period (e.g., "Last 30 Days", "All Time")
+   * @param {Function} progressCallback - Optional progress callback
+   * @returns {Promise<Object>} Analytics for the specified date range
+   */
+  async getAnalyticsForDateRange(period = 'All Time', progressCallback = null) {
+    // Convert period to date range specification
+    const dateRange = calculateDateRange(period);
+
+    if (progressCallback) {
+      progressCallback(`Analyzing ${dateRange.label}...`);
+    }
+
+    // For "All Time", use the cached data if available
+    if (!dateRange.isFiltered) {
+      if (!this.cache || !this.cache.lastAnalyzedTimestamp) {
+        // Need to compute from scratch
+        const result = await this.computeAnalytics({ progressCallback });
+        result.dateRange = dateRange;
+        return result;
+      }
+      // Add dateRange to existing cache
+      const result = { ...this.cache };
+      result.dateRange = dateRange;
+      return result;
+    }
+
+    // For filtered ranges, compute on-demand (don't cache)
+    if (progressCallback) {
+      progressCallback('Discovering conversations...');
+    }
+
+    // Import analyzer
+    const { analyzeAllConversations, updateCacheWithAnalysis } = await import('./analyzers/conversation-analyzer.js');
+
+    // Run analysis with date range filter
+    const analysis = await analyzeAllConversations(this.projectsDir, null, dateRange);
+
+    if (progressCallback) {
+      progressCallback(`Analyzing ${analysis.analyzedConversations} conversations...`);
+    }
+
+    // Create a temporary cache object for this date range
+    const tempCache = createEmptyCache();
+
+    // Add date range context to the cache
+    tempCache.dateRange = dateRange;
+
+    // Update with analysis results
+    await updateCacheWithAnalysis(tempCache, analysis);
+
+    // Compute keyword analytics
+    if (progressCallback) {
+      progressCallback('Analyzing keywords...');
+    }
+
+    try {
+      const { MiniSearchEngine } = await import('../search/minisearch-engine.js');
+      const searchEngine = new MiniSearchEngine();
+      const loaded = await searchEngine.loadIndex();
+
+      if (loaded) {
+        // Filter conversations by date range
+        let conversationsWithKeywords = Array.from(searchEngine.conversationData.values());
+
+        if (dateRange.isFiltered) {
+          const { isConversationInRange } = await import('./utils/date-range-helper.js');
+          conversationsWithKeywords = conversationsWithKeywords.filter(conv =>
+            isConversationInRange({
+              firstTimestamp: conv.firstTimestamp,
+              lastTimestamp: conv.lastTimestamp
+            }, dateRange)
+          );
+        }
+
+        const keywordAnalytics = analyzeKeywords(conversationsWithKeywords);
+        tempCache.keywords = keywordAnalytics;
+      } else {
+        tempCache.keywords = null;
+      }
+    } catch (error) {
+      this.logger.warn('Keyword analysis failed:', error.message);
+      tempCache.keywords = null;
+    }
+
+    if (progressCallback) {
+      progressCallback(`Analytics for ${dateRange.label} complete`);
+    }
+
+    return tempCache;
   }
 }

@@ -180,4 +180,58 @@ describe('AnalyticsManager', () => {
       expect(manager.cache.overview.totalConversations).toBe(0);
     });
   });
+
+  describe('Date range analytics', () => {
+    test('getAnalyticsForDateRange returns All Time when not filtered', async () => {
+      // Create projects directory
+      const projectsDir = join(testDir, 'projects');
+      await mkdir(projectsDir, { recursive: true });
+
+      const manager = new AnalyticsManager({
+        cacheDir: testDir,
+        projectsDir
+      });
+      await manager.initialize();
+
+      const result = await manager.getAnalyticsForDateRange('All Time');
+
+      expect(result.dateRange.isFiltered).toBe(false);
+      expect(result.dateRange.label).toBe('All Time');
+    }, 60000); // 60 second timeout for integration test
+
+    test('getAnalyticsForDateRange filters by date range', async () => {
+      // Create projects directory
+      const projectsDir = join(testDir, 'projects');
+      await mkdir(projectsDir, { recursive: true });
+
+      const manager = new AnalyticsManager({
+        cacheDir: testDir,
+        projectsDir
+      });
+      await manager.initialize();
+
+      const result = await manager.getAnalyticsForDateRange('Last 30 Days');
+
+      expect(result.dateRange.isFiltered).toBe(true);
+      expect(result.dateRange.label).toBe('Last 30 Days');
+      expect(result.overview.totalConversations).toBeGreaterThanOrEqual(0);
+    }, 60000); // 60 second timeout for integration test
+
+    test('progress callback is called during date range analysis', async () => {
+      // Create projects directory
+      const projectsDir = join(testDir, 'projects');
+      await mkdir(projectsDir, { recursive: true });
+
+      const manager = new AnalyticsManager({
+        cacheDir: testDir,
+        projectsDir
+      });
+      await manager.initialize();
+
+      const progress = [];
+      await manager.getAnalyticsForDateRange('Last 7 Days', msg => progress.push(msg));
+
+      expect(progress.length).toBeGreaterThan(0);
+    }, 60000); // 60 second timeout for integration test
+  });
 });

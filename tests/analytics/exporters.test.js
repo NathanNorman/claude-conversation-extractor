@@ -186,8 +186,13 @@ describe('Analytics Exporters', () => {
       const content = await readFile(overviewPath, 'utf8');
 
       const lines = content.split('\n');
-      expect(lines[0]).toContain('Metric,Value'); // Header
-      expect(lines[1]).toContain('Total Conversations,100');
+      // New format includes metadata header rows before data
+      expect(lines[0]).toBe('Claude Code Analytics Report (CSV)');
+      expect(lines[1]).toContain('Period,'); // Period line (e.g., "Period,All Time")
+      expect(lines[2]).toContain('Generated,'); // Generated timestamp
+      expect(lines[3]).toBe(''); // Blank line separator
+      expect(lines[4]).toBe('Metric,Value'); // Data header
+      expect(lines[5]).toBe('Total Conversations,100'); // First data row
     });
 
     test('should export tool usage to CSV', async () => {

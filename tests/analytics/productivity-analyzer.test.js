@@ -83,16 +83,6 @@ describe('Productivity Analyzer', () => {
       expect(result.weekendActivity).toBeCloseTo(8 / 58, 2); // (5+3) / 58
     });
 
-    test('should calculate average session length', () => {
-      const conversations = [
-        { durationMs: 30 * 60 * 1000 }, // 30 min
-        { durationMs: 60 * 60 * 1000 }  // 60 min
-      ];
-
-      const result = analyzeProductivity(conversations, {}, {});
-      expect(result.avgSessionLength).toBe(2700); // Average 45 min = 2700 seconds
-    });
-
     test('should handle conversations without durations', () => {
       const conversations = [
         { messageCount: 10 },
@@ -100,7 +90,6 @@ describe('Productivity Analyzer', () => {
       ];
 
       const result = analyzeProductivity(conversations, {}, {});
-      expect(result.avgSessionLength).toBe(0);
       expect(result.deepWorkSessions).toBe(0);
       expect(result.quickQuestions).toBe(0);
     });

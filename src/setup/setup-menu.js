@@ -5,6 +5,7 @@ import ora from 'ora';
 import { join } from 'path';
 import { homedir } from 'os';
 import { analyzeKeywords } from '../analytics/analyzers/keyword-analyzer.js';
+import { getDateRangeChoices, formatDateRangeLabel } from '../analytics/utils/date-range-helper.js';
 
 // Color scheme matching the main CLI
 const colors = {
@@ -220,14 +221,37 @@ export async function showSetupMenu(status) {
   return choice;
 }
 
+/**
+ * Prompt user to select analytics date range
+ * @returns {Promise<string>} Selected date range period
+ */
+async function selectAnalyticsTimeRange() {
+  const choices = getDateRangeChoices();
+
+  console.log(colors.info('\n⏱️  Select Time Period for Analytics:\n'));
+
+  const answer = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'period',
+      message: 'Which time period would you like to analyze?',
+      choices,
+      default: 'All Time'
+    }
+  ]);
+
+  return answer.period;
+}
+
 export async function showAnalytics(status) {
   const analyticsLines = [];
 
   // Try to use the new analytics system
   let cache = null;
+  let manager = null;
   try {
     const { AnalyticsManager } = await import('../analytics/analytics-manager.js');
-    const manager = new AnalyticsManager();
+    manager = new AnalyticsManager();
     await manager.initialize();
 
     // Check if we need to compute analytics
@@ -246,7 +270,31 @@ export async function showAnalytics(status) {
       spinner.succeed('Analytics ready');
     }
 
-    cache = manager.getCache();
+    // NEW: Select date range
+    const period = await selectAnalyticsTimeRange();
+
+    console.clear();
+
+    // Show loading spinner
+    const loadSpinner = ora(`Loading analytics for ${period}...`).start();
+
+    // Get analytics for selected date range
+    if (manager.getAnalyticsForDateRange) {
+      cache = await manager.getAnalyticsForDateRange(period, (msg) => {
+        loadSpinner.text = msg;
+      });
+      loadSpinner.succeed(`Analytics for ${period} loaded`);
+    } else {
+      // Fallback: Use basic cache and add date range info
+      cache = manager.getCache();
+      cache.dateRange = {
+        label: period,
+        start: period === 'All Time' ? null : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        end: period === 'All Time' ? null : new Date(),
+        isFiltered: period !== 'All Time'
+      };
+      loadSpinner.succeed(`Analytics for ${period} loaded`);
+    }
   } catch (error) {
     // Fall back to basic analytics if new system fails
     console.warn('Using basic analytics (enhanced system unavailable)');
@@ -254,6 +302,23 @@ export async function showAnalytics(status) {
 
   analyticsLines.push(colors.highlight('📊 CONVERSATION ANALYTICS'));
   analyticsLines.push('');
+
+  // NEW: Show date range if filtered
+  if (cache && cache.dateRange) {
+    if (cache.dateRange.isFiltered) {
+      analyticsLines.push(colors.info(`📅 Period: ${cache.dateRange.label}`));
+
+      // Show actual date range
+      const dateLabel = formatDateRangeLabel(
+        cache.dateRange.start ? new Date(cache.dateRange.start) : null,
+        cache.dateRange.end ? new Date(cache.dateRange.end) : null
+      );
+      analyticsLines.push(colors.dim(`   ${dateLabel}`));
+    } else {
+      analyticsLines.push(colors.info('📅 Period: All Time'));
+    }
+    analyticsLines.push('');
+  }
 
   // Use enhanced analytics if available
   if (cache && cache.overview.totalConversations > 0) {
@@ -544,7 +609,8 @@ export async function showAnalytics(status) {
   }
 
   // User Actions (slash commands, hooks - what YOU do)
-  if (cache && cache.userActions) {
+  // Only show this section if we have data (only available for live JSONL conversations)
+  if (cache && cache.userActions && (cache.userActions.slashCommands.total > 0 || cache.userActions.hooks.total > 0)) {
     analyticsLines.push(colors.info('⚡ Your Actions:'));
 
     // Slash commands
@@ -585,10 +651,6 @@ export async function showAnalytics(status) {
     }
     if (pm.messagesPerDay > 0) {
       analyticsLines.push(`  Messages/Day: ${colors.accent(pm.messagesPerDay)}`);
-    }
-    if (pm.avgSessionLength > 0) {
-      const minutes = Math.floor(pm.avgSessionLength / 60);
-      analyticsLines.push(`  Avg Session Length: ${colors.accent(minutes + ' min')}`);
     }
     if (pm.deepWorkSessions > 0 || pm.quickQuestions > 0) {
       analyticsLines.push(`  Deep Work: ${colors.accent(pm.deepWorkSessions)} sessions ${colors.dim('(>30 min)')}`);
@@ -798,6 +860,14 @@ async function showExportMenu(cache, status) {
   // Get export directory
   const exportDir = status.config?.exportDirectory || join(homedir(), '.claude', 'claude_conversations', 'analytics');
 
+  // Generate filename with date range
+  const dateRangeSuffix = cache.dateRange && cache.dateRange.isFiltered
+    ? `-${cache.dateRange.label.toLowerCase().replace(/\s+/g, '-')}`
+    : '-all-time';
+
+  const timestamp = new Date().toISOString().split('T')[0];
+  const baseFilename = `analytics${dateRangeSuffix}-${timestamp}`;
+
   const spinner = ora({
     text: `Exporting to ${format.toUpperCase()}...`,
     color: 'cyan'
@@ -808,15 +878,27 @@ async function showExportMenu(cache, status) {
 
     if (format === 'json') {
       const { exportToJSON } = await import('../analytics/exporters/json-exporter.js');
-      const path = await exportToJSON(cache, { outputDir: exportDir });
+      const path = await exportToJSON(cache, {
+        outputDir: exportDir,
+        filename: `${baseFilename}.json`,
+        includeTimestamp: false
+      });
       exportedPaths.push(path);
     } else if (format === 'markdown') {
       const { exportToMarkdown } = await import('../analytics/exporters/markdown-exporter.js');
-      const path = await exportToMarkdown(cache, { outputDir: exportDir });
+      const path = await exportToMarkdown(cache, {
+        outputDir: exportDir,
+        filename: `${baseFilename}.md`,
+        includeTimestamp: false
+      });
       exportedPaths.push(path);
     } else if (format === 'csv') {
       const { exportToCSV } = await import('../analytics/exporters/csv-exporter.js');
-      exportedPaths = await exportToCSV(cache, { outputDir: exportDir });
+      exportedPaths = await exportToCSV(cache, {
+        outputDir: exportDir,
+        prefix: `analytics${dateRangeSuffix}-${timestamp}`,
+        includeTimestamp: false
+      });
     }
 
     spinner.succeed(`Exported analytics to ${format.toUpperCase()}`);

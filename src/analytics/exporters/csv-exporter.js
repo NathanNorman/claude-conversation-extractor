@@ -66,7 +66,29 @@ export async function exportToCSV(cache, options = {}) {
 async function exportOverviewCSV(cache, outputPath) {
   const lines = [];
 
-  // Header
+  // Header with date range metadata
+  lines.push('Claude Code Analytics Report (CSV)');
+
+  // NEW: Date range metadata
+  if (cache.dateRange) {
+    lines.push(`Period,${cache.dateRange.label}`);
+
+    if (cache.dateRange.isFiltered) {
+      const { formatDateRangeLabel } = await import('../utils/date-range-helper.js');
+      const dateLabel = formatDateRangeLabel(
+        cache.dateRange.start ? new Date(cache.dateRange.start) : null,
+        cache.dateRange.end ? new Date(cache.dateRange.end) : null
+      );
+      lines.push(`Date Range,${dateLabel}`);
+    }
+  } else {
+    lines.push('Period,All Time');
+  }
+
+  lines.push(`Generated,${new Date().toISOString()}`);
+  lines.push('');
+
+  // Data header
   lines.push('Metric,Value');
 
   // Overview metrics
@@ -94,7 +116,6 @@ async function exportOverviewCSV(cache, outputPath) {
     lines.push(`Conversations per Week,${pm.conversationsPerWeek}`);
     lines.push(`Messages per Day,${pm.messagesPerDay}`);
     lines.push(`Tools per Conversation,${pm.toolsPerConversation}`);
-    lines.push(`Avg Session Length (seconds),${pm.avgSessionLength}`);
     lines.push(`Deep Work Sessions,${pm.deepWorkSessions}`);
     lines.push(`Quick Questions,${pm.quickQuestions}`);
     lines.push(`Weekend Activity Ratio,${pm.weekendActivity}`);

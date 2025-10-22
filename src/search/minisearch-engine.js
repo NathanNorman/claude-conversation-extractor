@@ -138,7 +138,15 @@ export class MiniSearchEngine {
       messages: [],
       fullText: '',
       wordCount: 0,
-      messageCount: 0
+      messageCount: 0,
+      // Analytics metadata
+      userTurns: 0,
+      assistantTurns: 0,
+      totalTurns: 0,
+      toolCount: 0,
+      firstTimestamp: null,
+      lastTimestamp: null,
+      durationMs: 0
     };
 
     // Extract metadata from header - handle both old and new formats
@@ -166,6 +174,10 @@ export class MiniSearchEngine {
         } catch {
           conversation.modified = new Date().toISOString();
         }
+      } else if (line.startsWith('Messages:') || line.startsWith('**Messages:**')) {
+        // Extract actual message count from header
+        const messageCountStr = line.split(/Messages:\*?\*?/)[1].trim();
+        conversation.messageCount = parseInt(messageCountStr, 10) || 0;
       }
     }
 
@@ -180,17 +192,17 @@ export class MiniSearchEngine {
     // Extract message content (everything between ## headers)
     let currentMessage = null;
     let messageContent = '';
+    const parsedMessages = [];
 
     for (const line of lines) {
       if (line.startsWith('## 👤') || line.startsWith('## 🤖')) {
         // Save previous message if exists
         if (currentMessage && messageContent.trim()) {
-          conversation.messages.push({
+          parsedMessages.push({
             speaker: currentMessage,
             content: messageContent.trim()
           });
           conversation.fullText += ' ' + messageContent.trim();
-          conversation.messageCount++;
         }
 
         // Start new message
@@ -204,16 +216,44 @@ export class MiniSearchEngine {
 
     // Save last message
     if (currentMessage && messageContent.trim()) {
-      conversation.messages.push({
+      parsedMessages.push({
         speaker: currentMessage,
         content: messageContent.trim()
       });
       conversation.fullText += ' ' + messageContent.trim();
-      conversation.messageCount++;
     }
+
+    conversation.messages = parsedMessages;
 
     // Calculate word count
     conversation.wordCount = conversation.fullText.split(/\s+/).length;
+
+    // Count conversational turns from parsed messages
+    // NOTE: messageCount from header is the total JSONL entries
+    // totalTurns is the actual user/assistant conversational exchanges
+    for (const msg of parsedMessages) {
+      if (msg.speaker === 'user') {
+        conversation.userTurns++;
+      } else if (msg.speaker === 'assistant') {
+        conversation.assistantTurns++;
+      }
+    }
+    conversation.totalTurns = conversation.userTurns + conversation.assistantTurns;
+
+    // If messageCount wasn't set from header, use parsed message count
+    if (!conversation.messageCount) {
+      conversation.messageCount = parsedMessages.length;
+    }
+
+    // Set approximate timestamps for archived conversations
+    // Markdown files don't have individual message timestamps, only conversation date
+    if (conversation.modified) {
+      // Use the conversation date as both first and last timestamp
+      // This is approximate but better than nothing
+      conversation.firstTimestamp = conversation.modified;
+      conversation.lastTimestamp = conversation.modified;
+      conversation.durationMs = 0; // Can't calculate duration from markdown alone
+    }
 
     return conversation;
   }
@@ -309,7 +349,16 @@ export class MiniSearchEngine {
         fullText: conv.fullText || document.content,
         content: conv.fullText || document.content,
         _fullText: conv.fullText || document.content,
-        _content: conv.fullText || document.content
+        _content: conv.fullText || document.content,
+
+        // Analytics metadata
+        firstTimestamp: conv.firstTimestamp || null,
+        lastTimestamp: conv.lastTimestamp || null,
+        durationMs: conv.durationMs || 0,
+        userTurns: conv.userTurns || 0,
+        assistantTurns: conv.assistantTurns || 0,
+        totalTurns: conv.totalTurns || 0,
+        toolCount: conv.toolCount || 0
       });
     }
 
@@ -381,7 +430,16 @@ export class MiniSearchEngine {
           fullText: conv.fullText || document.content,
           content: conv.fullText || document.content,
           _fullText: conv.fullText || document.content,
-          _content: conv.fullText || document.content
+          _content: conv.fullText || document.content,
+
+          // Analytics metadata
+          firstTimestamp: conv.firstTimestamp || null,
+          lastTimestamp: conv.lastTimestamp || null,
+          durationMs: conv.durationMs || 0,
+          userTurns: conv.userTurns || 0,
+          assistantTurns: conv.assistantTurns || 0,
+          totalTurns: conv.totalTurns || 0,
+          toolCount: conv.toolCount || 0
         });
       }
     } else {
@@ -495,7 +553,16 @@ export class MiniSearchEngine {
             fullText: document.content,
             content: document.content,
             _fullText: document.content,
-            _content: document.content
+            _content: document.content,
+
+            // Analytics metadata
+            firstTimestamp: conversation.firstTimestamp || null,
+            lastTimestamp: conversation.lastTimestamp || null,
+            durationMs: conversation.durationMs || 0,
+            userTurns: conversation.userTurns || 0,
+            assistantTurns: conversation.assistantTurns || 0,
+            totalTurns: conversation.totalTurns || 0,
+            toolCount: conversation.toolCount || 0
           });
 
           conversationIndex++;
@@ -1448,7 +1515,16 @@ export class MiniSearchEngine {
           fullText: conversation.fullText,
           content: conversation.fullText,
           _fullText: conversation.fullText,
-          _content: conversation.fullText
+          _content: conversation.fullText,
+
+          // Analytics metadata
+          firstTimestamp: conversation.firstTimestamp || null,
+          lastTimestamp: conversation.lastTimestamp || null,
+          durationMs: conversation.durationMs || 0,
+          userTurns: conversation.userTurns || 0,
+          assistantTurns: conversation.assistantTurns || 0,
+          totalTurns: conversation.totalTurns || 0,
+          toolCount: conversation.toolCount || 0
         });
       } catch (error) {
         this.logger.error(`Error processing ${file.name}: ${error.message}`);

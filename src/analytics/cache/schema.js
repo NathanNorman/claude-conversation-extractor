@@ -108,7 +108,6 @@ export function createEmptyCache() {
       conversationsPerWeek: 0,
       messagesPerDay: 0,
       toolsPerConversation: 0,
-      avgSessionLength: 0,
       deepWorkSessions: 0,
       quickQuestions: 0,
       weekendActivity: 0

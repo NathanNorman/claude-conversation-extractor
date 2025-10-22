@@ -9,9 +9,10 @@
 /**
  * Analyze time patterns from conversation data
  * @param {Array<Object>} conversations - Array of conversation objects with timestamps
+ * @param {Object} dateRange - Optional date range filter
  * @returns {Object} Time pattern analysis
  */
-export function analyzeTimePatterns(conversations) {
+export function analyzeTimePatterns(conversations, dateRange = null) {
   if (!conversations || conversations.length === 0) {
     return createEmptyTimePatterns();
   }
@@ -27,8 +28,8 @@ export function analyzeTimePatterns(conversations) {
   const hourlyActivity = computeHourlyActivity(timestamps);
   const dailyActivity = computeDailyActivity(timestamps);
   const dayHourMatrix = computeDayHourMatrix(timestamps); // Real day×hour data
-  const weeklyTrend = computeWeeklyTrend(timestamps);
-  const monthlyTrend = computeMonthlyTrend(timestamps);
+  const weeklyTrend = computeWeeklyTrend(timestamps, dateRange);
+  const monthlyTrend = computeMonthlyTrend(timestamps, dateRange);
   const streaks = computeStreaks(timestamps);
   const activeDays = countActiveDays(timestamps);
 
@@ -144,16 +145,19 @@ function computeDayHourMatrix(timestamps) {
 /**
  * Compute weekly trend for last 12 weeks
  * @param {Array<Date>} timestamps - Array of timestamps
+ * @param {Object} dateRange - Optional date range filter
  * @returns {Array<number>} Activity count per week
  */
-function computeWeeklyTrend(timestamps) {
-  const now = new Date();
+function computeWeeklyTrend(timestamps, dateRange = null) {
+  // If filtered, compute trends relative to the filtered period
+  // For "All Time", use last 12 weeks from now
+  const endDate = dateRange?.end ? new Date(dateRange.end) : new Date();
   const weeklyData = [];
 
   // Go back 12 weeks
   for (let i = 11; i >= 0; i--) {
-    const weekStart = new Date(now);
-    weekStart.setDate(weekStart.getDate() - (i * 7) - now.getDay());
+    const weekStart = new Date(endDate);
+    weekStart.setDate(weekStart.getDate() - (i * 7) - endDate.getDay());
     weekStart.setHours(0, 0, 0, 0);
 
     const weekEnd = new Date(weekStart);
@@ -169,16 +173,19 @@ function computeWeeklyTrend(timestamps) {
 /**
  * Compute monthly trend for last 12 months
  * @param {Array<Date>} timestamps - Array of timestamps
+ * @param {Object} dateRange - Optional date range filter
  * @returns {Array<number>} Activity count per month
  */
-function computeMonthlyTrend(timestamps) {
-  const now = new Date();
+function computeMonthlyTrend(timestamps, dateRange = null) {
+  // If filtered, compute trends relative to the filtered period
+  // For "All Time", use last 12 months from now
+  const endDate = dateRange?.end ? new Date(dateRange.end) : new Date();
   const monthlyData = [];
 
   // Go back 12 months
   for (let i = 11; i >= 0; i--) {
-    const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    const monthStart = new Date(endDate.getFullYear(), endDate.getMonth() - i, 1);
+    const monthEnd = new Date(endDate.getFullYear(), endDate.getMonth() - i + 1, 1);
 
     const count = timestamps.filter(ts => ts >= monthStart && ts < monthEnd).length;
     monthlyData.push(count);
