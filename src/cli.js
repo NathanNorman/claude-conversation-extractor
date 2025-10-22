@@ -339,7 +339,8 @@ class LiveSearchState {
     this.terminalSize = { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
     this.activeFilters = {
       repos: new Set(),
-      dateRange: null
+      dateRange: null,
+      keywords: new Set()
     };
     this.browsePreviewPage = 0; // Track which page of preview we're viewing in browse mode
   }
@@ -506,26 +507,35 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.success(`✅ Found ${conversationCount} conversations\n`));
       
       // Display active filters with prominent indicator
-      const hasActiveFilters = state.activeFilters.repos.size > 0 || state.activeFilters.dateRange;
-      
+      const hasActiveFilters = state.activeFilters.repos.size > 0 || state.activeFilters.dateRange || state.activeFilters.keywords.size > 0;
+
       if (hasActiveFilters) {
         console.log(colors.accent('┌─ FILTERS ACTIVE ─────────────────┐'));
-        
+
         // Show repo filter if active
         if (state.activeFilters.repos.size > 0) {
           const repoList = Array.from(state.activeFilters.repos);
-          const displayRepos = repoList.length > 3 
+          const displayRepos = repoList.length > 3
             ? repoList.slice(0, 3).join(', ') + `, +${repoList.length - 3} more`
             : repoList.join(', ');
           console.log(colors.highlight('│ 📁 Repos: ' + displayRepos));
         }
-        
+
         // Show date filter if active
         if (state.activeFilters.dateRange) {
           const dateDisplay = formatDateRange(state.activeFilters.dateRange.type, state.activeFilters.dateRange.custom);
           console.log(colors.highlight('│ 📅 Date: ' + dateDisplay));
         }
-        
+
+        // Show keyword filter if active
+        if (state.activeFilters.keywords.size > 0) {
+          const keywordList = Array.from(state.activeFilters.keywords);
+          const displayKeywords = keywordList.length > 3
+            ? keywordList.slice(0, 3).join(', ') + `, +${keywordList.length - 3} more`
+            : keywordList.join(', ');
+          console.log(colors.highlight('│ 🏷️  Keywords: ' + displayKeywords));
+        }
+
         console.log(colors.accent('└─ Press [Tab] to modify ──────────┘\n'));
       } else {
         console.log(colors.dim('  No filters active [Press Tab to filter]\n'));
@@ -685,6 +695,18 @@ async function showLiveSearch(searchInterface = null) {
                 console.log(colors.subdued('    │ ') + renderedLine);
               }
               console.log(colors.subdued('    └─'));
+
+              // Show keywords if available (top 5 for display)
+              if (result.keywords && result.keywords.length > 0) {
+                const keywordBadges = result.keywords
+                  .slice(0, 5)  // Show only top 5 keywords
+                  .map(k => {
+                    const term = typeof k === 'string' ? k : k.term;
+                    return chalk.bgBlue.black(` ${term} `);
+                  })
+                  .join(' ');
+                console.log('\n    ' + keywordBadges);
+              }
             }
           });
           
@@ -729,6 +751,7 @@ async function showLiveSearch(searchInterface = null) {
               originalPath: conv.originalPath,
               preview: conv.preview || (conv.fullText ? conv.fullText.slice(0, 200) : ''),
               fullText: conv.fullText,
+              keywords: conv.keywords || [],  // Include keywords for filtering and display
               relevance: 1.0
             }))
             .sort((a, b) => b.modified.getTime() - a.modified.getTime());
@@ -744,7 +767,7 @@ async function showLiveSearch(searchInterface = null) {
         if (filteredConversations.length > 0) {
           // Show total from archive or from conversations
           const totalAvailable = hasArchive ? searchInterface.conversationData.size : conversationsToShow.length;
-          const isFiltered = filteredConversations.length < totalAvailable || state.activeFilters.repos.size > 0;
+          const isFiltered = filteredConversations.length < totalAvailable || state.activeFilters.repos.size > 0 || state.activeFilters.keywords.size > 0;
 
           let countDisplay;
           if (isFiltered) {
@@ -859,6 +882,18 @@ async function showLiveSearch(searchInterface = null) {
                 }
 
                 console.log(colors.subdued('    └─'));
+
+                // Show keywords if available (top 5 for display)
+                if (conv.keywords && conv.keywords.length > 0) {
+                  const keywordBadges = conv.keywords
+                    .slice(0, 5)  // Show only top 5 keywords
+                    .map(k => {
+                      const term = typeof k === 'string' ? k : k.term;
+                      return chalk.bgBlue.black(` ${term} `);
+                    })
+                    .join(' ');
+                  console.log('\n    ' + keywordBadges);
+                }
               }
             }
           }
@@ -953,6 +988,7 @@ async function showLiveSearch(searchInterface = null) {
         const filterTypes = [
           { name: '📁 Filter by Repository', value: 'repo' },
           { name: '📅 Filter by Date Range', value: 'date' },
+          { name: '🏷️ Filter by Keyword', value: 'keyword' },
           { name: '🧹 Clear All Filters', value: 'clear' },
           { name: '← Back to Search', value: 'back' }
         ];
@@ -983,10 +1019,13 @@ async function showLiveSearch(searchInterface = null) {
           });
         } else if (filterType === 'date') {
           await showDateFilter();
+        } else if (filterType === 'keyword') {
+          await showKeywordFilter();
         } else if (filterType === 'clear') {
           logger.infoSync('Clearing all filters');
           state.activeFilters.repos.clear();
           state.activeFilters.dateRange = null;
+          state.activeFilters.keywords.clear();
         }
         
         // Re-enable raw mode and ensure readline is ready
@@ -1175,7 +1214,71 @@ async function showLiveSearch(searchInterface = null) {
         // Don't crash, just return to search
       }
     };
-    
+
+    // Show keyword filter selection
+    const showKeywordFilter = async () => {
+      try {
+        // Get all unique keywords from search engine
+        const allKeywords = new Map(); // keyword -> count
+
+        if (searchInterface && searchInterface.conversationData) {
+          for (const conv of searchInterface.conversationData.values()) {
+            if (conv.keywords && conv.keywords.length > 0) {
+              for (const kw of conv.keywords) {
+                const term = typeof kw === 'string' ? kw : kw.term;
+                allKeywords.set(term, (allKeywords.get(term) || 0) + 1);
+              }
+            }
+          }
+        }
+
+        if (allKeywords.size === 0) {
+          console.log(colors.warning('No keywords found. Rebuild index to extract keywords.'));
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          return;
+        }
+
+        // Sort by frequency and take top 50
+        const sortedKeywords = Array.from(allKeywords.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 50)
+          .map(([term, count]) => ({
+            name: `${term} (${count})`,
+            value: term
+          }));
+
+        console.log(colors.primary('\n🏷️  Select Keywords to Filter:\n'));
+        console.log(colors.dim('(Use space to select, Enter to confirm)\n'));
+
+        // Ensure stdin is in the right mode for inquirer
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+
+        const { selectedKeywords } = await inquirer.prompt([{
+          type: 'checkbox',
+          name: 'selectedKeywords',
+          message: 'Select keywords:',
+          choices: sortedKeywords,
+          pageSize: 15
+        }]);
+
+        // Update active filters
+        state.activeFilters.keywords.clear();
+        selectedKeywords.forEach(kw => state.activeFilters.keywords.add(kw));
+
+        if (selectedKeywords.length > 0) {
+          console.log(colors.success(`\n✓ Filtering by ${selectedKeywords.length} keyword(s): ${selectedKeywords.join(', ')}`));
+        } else {
+          console.log(colors.success('\n✓ Keyword filter cleared'));
+        }
+
+      } catch (error) {
+        console.error('Keyword filter error:', error);
+        // Don't crash, just return to search
+      }
+    };
+
     // Apply filters to results
     const applyFilters = (searchResults, filters) => {
       logger.debug('applyFilters called', { 
@@ -1197,10 +1300,10 @@ async function showLiveSearch(searchInterface = null) {
       // Apply date filter
       if (filters.dateRange) {
         const dateRange = getDateRange(
-          filters.dateRange.type, 
+          filters.dateRange.type,
           filters.dateRange.custom
         );
-        
+
         filtered = filtered.filter(result => {
           const modified = result.modified || result.file?.modified;
           if (!modified) return false;
@@ -1208,14 +1311,32 @@ async function showLiveSearch(searchInterface = null) {
           return isDateInRange(date, dateRange);
         });
       }
-      
-      logger.info('Filters applied', { 
-        before: searchResults.length, 
+
+      // Apply keyword filter
+      if (filters.keywords && filters.keywords.size > 0) {
+        filtered = filtered.filter(result => {
+          if (!result.keywords || result.keywords.length === 0) return false;
+
+          // Extract keyword terms (handle both string and object formats)
+          const convKeywords = result.keywords.map(k =>
+            (typeof k === 'string' ? k : k.term).toLowerCase()
+          );
+
+          // Check if ANY requested keyword matches
+          return Array.from(filters.keywords).some(reqKw =>
+            convKeywords.some(convKw => convKw.includes(reqKw.toLowerCase()))
+          );
+        });
+      }
+
+      logger.info('Filters applied', {
+        before: searchResults.length,
         after: filtered.length,
         activeRepos: Array.from(filters.repos),
-        dateFilter: filters.dateRange?.type
+        dateFilter: filters.dateRange?.type,
+        activeKeywords: filters.keywords ? Array.from(filters.keywords) : []
       });
-      
+
       return filtered;
     };
     
@@ -1489,6 +1610,12 @@ async function showLiveSearch(searchInterface = null) {
       console.log(colors.primary('│   Ctrl+Space - Toggle multi-select mode                          │'));
       console.log(colors.primary('│   Esc - Clear search or exit                                     │'));
       console.log(colors.primary('│   Ctrl+C - Exit immediately                                      │'));
+      console.log(colors.primary('│                                                                   │'));
+      console.log(colors.primary('│ 🏷️  KEYWORDS:                                                       │'));
+      console.log(colors.primary('│   Keywords displayed under each result (top 5)                   │'));
+      console.log(colors.primary('│   keyword:term - Search conversations with specific keyword      │'));
+      console.log(colors.primary('│   keywords:a,b - Multiple keywords (OR logic)                    │'));
+      console.log(colors.primary('│   CLI: --keyword typescript  (for automation/agents)             │'));
       console.log(colors.primary('│                                                                   │'));
       console.log(colors.accent(`└───────────────────────────────────────────────────────────────────┘`));
       console.log(colors.dim('\nPress any key to continue...'));
@@ -2112,6 +2239,7 @@ async function runAutomatedSearch(args) {
   const searchTerm = args['--search'] || args['--search-term'];
   const filterRepos = args['--filter-repo'] ? args['--filter-repo'].split(',') : [];
   const filterDate = args['--filter-date'];
+  const filterKeywords = args['--keyword'] || args['--keywords']; // Support --keyword=typescript or --keywords=react,node
   const limit = parseInt(args['--limit'] || '20', 10);
   const outputJson = args['--json'] !== undefined;
 
@@ -2132,20 +2260,21 @@ async function runAutomatedSearch(args) {
     results = searchResult.results || [];
   } else {
     // No search term - return all conversations sorted by date (newest first)
+    // NOTE: Don't slice to limit yet - apply filters first, then limit
     const allConvos = Array.from(engine.conversationData.values())
       .sort((a, b) => {
         const dateA = a.modified ? new Date(a.modified) : new Date(0);
         const dateB = b.modified ? new Date(b.modified) : new Date(0);
         return dateB - dateA; // Descending order (newest first)
       })
-      .slice(0, limit)
       .map(conv => ({
         project: conv.project,
         exportedFile: conv.exportedFile,
         originalPath: conv.originalPath,
         modified: conv.modified,
         preview: conv.preview,
-        fullText: conv.fullText
+        fullText: conv.fullText,
+        keywords: conv.keywords || []  // Include keywords for agents
       }));
     results = allConvos;
   }
@@ -2164,6 +2293,27 @@ async function runAutomatedSearch(args) {
       });
     }
   }
+
+  // Apply keyword filter
+  if (filterKeywords) {
+    const requestedKeywords = filterKeywords.split(',').map(k => k.trim().toLowerCase());
+    results = results.filter(r => {
+      if (!r.keywords || r.keywords.length === 0) return false;
+
+      // Extract keyword terms (handle both string and object formats)
+      const convKeywords = r.keywords.map(k =>
+        (typeof k === 'string' ? k : k.term).toLowerCase()
+      );
+
+      // Check if ANY requested keyword matches
+      return requestedKeywords.some(reqKw =>
+        convKeywords.some(convKw => convKw.includes(reqKw) || reqKw.includes(convKw))
+      );
+    });
+  }
+
+  // Apply limit AFTER all filters (so we get limit results that match all filters)
+  results = results.slice(0, limit);
 
   // Format output with file sizes
   const output = [];
@@ -2191,7 +2341,8 @@ async function runAutomatedSearch(args) {
       preview: r.preview || (r.fullText ? r.fullText.slice(0, 200) : ''),
       relevance: r.relevance,
       matches: r.totalOccurrences,
-      highlightedPreview: r.preview // Already has [HIGHLIGHT] markers
+      highlightedPreview: r.preview, // Already has [HIGHLIGHT] markers
+      keywords: r.keywords ? r.keywords.map(k => typeof k === 'string' ? k : k.term) : [] // Extract keyword terms for agents
     });
   }
 
@@ -2551,7 +2702,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
 
     // For choices that need to be handled by main()'s switch statement, exit the loop
     // These are setup-related operations that change system state
-    const mainHandledChoices = ['extract_only', 'index_only', 'change_location', 'view_analytics', 'view_achievements'];
+    const mainHandledChoices = ['extract_only', 'index_only', 'force_rebuild_index', 'change_location', 'view_analytics', 'view_achievements'];
     if (mainHandledChoices.includes(choice)) {
       return choice;
     }
@@ -2566,7 +2717,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
 async function main() {
   // Check for CLI arguments (non-interactive mode)
   const args = parseArgs();
-  if (args['--search'] || args['--search-term'] || args['--json'] || args['--filter-repo'] || args['--filter-date']) {
+  if (args['--search'] || args['--search-term'] || args['--json'] || args['--filter-repo'] || args['--filter-date'] || args['--keyword'] || args['--keywords']) {
     return await runAutomatedSearch(args);
   }
 
@@ -2626,17 +2777,65 @@ async function main() {
       break;
         
     case 'index_only':
-      const indexBuilder = new IndexBuilder();
-      const indexResult = await indexBuilder.buildSearchIndex(status.conversations, status.exportLocation);
-      await setupManager.markIndexComplete(indexResult.documentCount);
-      // Load MiniSearch index
-      const miniSearchIdx = new MiniSearchEngine();
-      const indexLoaded = await miniSearchIdx.loadIndex();
-      if (indexLoaded) {
-        searchInterface = miniSearchIdx;
-      }
+      console.log(colors.info('\n🔨 Building search index from all exported markdown files...\n'));
+      const indexOnlySpinner = ora('Building index with keyword extraction...').start();
+
+      // Build directly from markdown files using MiniSearchEngine (with silent logger for clean spinner)
+      const indexOnlyEngine = new MiniSearchEngine({
+        exportDir: status.exportLocation,
+        logger: {
+          info: (msg) => indexOnlySpinner.text = msg.replace('Extracting keywords from conversations...', 'Extracting keywords...').replace('Extracted keywords for', 'Extracted keywords from'),
+          warn: () => {},
+          error: (msg) => indexOnlySpinner.fail(msg),
+          debug: () => {}
+        }
+      });
+      const indexOnlyStats = await indexOnlyEngine.buildIndex();
+
+      indexOnlySpinner.succeed(colors.success(`✅ Index built with ${indexOnlyStats.totalConversations} conversations!`));
+
+      await setupManager.markIndexComplete(indexOnlyStats.totalConversations);
+
+      // Use the newly built index
+      searchInterface = indexOnlyEngine;
+
+      console.log(colors.dim(`\n  Conversations indexed: ${indexOnlyStats.totalConversations}`));
+      console.log(colors.dim(`  Index size: ${(indexOnlyStats.indexSizeBytes / 1024 / 1024).toFixed(2)} MB\n`));
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
       break;
         
+    case 'force_rebuild_index':
+      console.log(colors.info('\n🔄 Rebuilding search index from all exported markdown files...\n'));
+      const forceRebuildSpinner = ora('Building index with keyword extraction...').start();
+
+      // Build directly from markdown files using MiniSearchEngine (with silent logger for clean spinner)
+      const forceRebuildEngine = new MiniSearchEngine({
+        exportDir: status.exportLocation,
+        logger: {
+          info: (msg) => forceRebuildSpinner.text = msg.replace('Extracting keywords from conversations...', 'Extracting keywords...').replace('Extracted keywords for', 'Extracted keywords from'),
+          warn: () => {},
+          error: (msg) => forceRebuildSpinner.fail(msg),
+          debug: () => {}
+        }
+      });
+      const forceRebuildStats = await forceRebuildEngine.buildIndex();
+
+      forceRebuildSpinner.succeed(colors.success(`✅ Index rebuilt with ${forceRebuildStats.totalConversations} conversations!`));
+
+      await setupManager.markIndexComplete(forceRebuildStats.totalConversations);
+
+      // Reload the index
+      searchInterface = forceRebuildEngine;
+
+      console.log(colors.dim(`\n  Conversations indexed: ${forceRebuildStats.totalConversations}`));
+      console.log(colors.dim(`  Index size: ${(forceRebuildStats.indexSizeBytes / 1024 / 1024).toFixed(2)} MB\n`));
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Re-run main to show updated menu
+      return main();
+
     case 'change_location':
       const newLocation = await confirmExportLocation();
       // Only update if user didn't cancel

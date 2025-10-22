@@ -29,6 +29,17 @@ export async function exportToJSON(cache, options = {}) {
     data: cache
   };
 
+  // Add keyword analytics section if available
+  if (cache.keywords) {
+    exportData.data.keywords = {
+      summary: cache.keywords.summary,
+      topKeywords: cache.keywords.topKeywords,
+      topKeywordsByProject: cache.keywords.topKeywordsByProject,
+      trends: cache.keywords.trends,
+      rareKeywords: cache.keywords.rareKeywords
+    };
+  }
+
   // Format JSON
   const jsonContent = pretty
     ? JSON.stringify(exportData, null, 2)

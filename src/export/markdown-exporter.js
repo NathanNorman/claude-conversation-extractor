@@ -193,12 +193,18 @@ class MarkdownExporter {
     // Add date range if messages have timestamps
     if (messages.length > 0 && messages[0].timestamp) {
       const firstDate = new Date(messages[0].timestamp);
-      const lastDate = messages[messages.length - 1].timestamp 
-        ? new Date(messages[messages.length - 1].timestamp) 
+      const lastDate = messages[messages.length - 1].timestamp
+        ? new Date(messages[messages.length - 1].timestamp)
         : firstDate;
       header.push(`- **Date range:** ${firstDate.toLocaleDateString()} - ${lastDate.toLocaleDateString()}`);
     }
-    
+
+    // Add keywords if present
+    if (conversation.keywords && conversation.keywords.length > 0) {
+      const keywordTerms = conversation.keywords.map(k => k.term).join(', ');
+      header.push(`- **Keywords:** ${keywordTerms}`);
+    }
+
     return header.join('\n');
   }
 

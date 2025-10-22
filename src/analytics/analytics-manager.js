@@ -9,6 +9,7 @@ import { readFile, writeFile, mkdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { createEmptyCache, validateCache, migrateCache, CACHE_VERSION } from './cache/schema.js';
+import { analyzeKeywords } from './analyzers/keyword-analyzer.js';
 
 export class AnalyticsManager {
   constructor(options = {}) {
@@ -286,6 +287,33 @@ export class AnalyticsManager {
 
     // Update cache with results
     await updateCacheWithAnalysis(this.cache, analysis);
+
+    // Compute keyword analytics
+    if (progressCallback) {
+      progressCallback('Analyzing keywords...');
+    }
+
+    try {
+      // Load search engine to get conversations with keywords
+      const { MiniSearchEngine } = await import('../search/minisearch-engine.js');
+      const searchEngine = new MiniSearchEngine();
+      const loaded = await searchEngine.loadIndex();
+
+      if (loaded) {
+        const conversationsWithKeywords = Array.from(searchEngine.conversationData.values());
+        const keywordAnalytics = analyzeKeywords(conversationsWithKeywords);
+
+        // Add to cache
+        this.cache.keywords = keywordAnalytics;
+      } else {
+        // No index available
+        this.cache.keywords = null;
+      }
+    } catch (error) {
+      // Keyword analytics failed - don't block other analytics
+      this.logger.warn('Keyword analysis failed:', error.message);
+      this.cache.keywords = null;
+    }
 
     if (progressCallback) {
       progressCallback('Saving analytics cache...');

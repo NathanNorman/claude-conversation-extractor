@@ -51,6 +51,12 @@ export async function exportToCSV(cache, options = {}) {
     exportedFiles.push(path);
   }
 
+  // Export keywords
+  if (cache.keywords) {
+    const path = await exportKeywordsCSV(cache.keywords, join(outputDir, `${prefix}-keywords${timestamp}.csv`));
+    exportedFiles.push(path);
+  }
+
   return exportedFiles;
 }
 
@@ -195,6 +201,42 @@ async function exportTimePatternsCSV(timePatterns, outputPath) {
   if (timePatterns.monthlyTrend) {
     for (let month = 0; month < timePatterns.monthlyTrend.length; month++) {
       lines.push(`Month ${month + 1},${timePatterns.monthlyTrend[month]}`);
+    }
+  }
+
+  await writeFile(outputPath, lines.join('\n'), 'utf8');
+  return outputPath;
+}
+
+/**
+ * Export keywords to CSV
+ */
+async function exportKeywordsCSV(keywords, outputPath) {
+  const lines = [];
+
+  // Top Keywords section
+  lines.push('TOP KEYWORDS');
+  lines.push('Keyword,Count,Percentage');
+
+  if (keywords.topKeywords && keywords.topKeywords.length > 0) {
+    for (const kw of keywords.topKeywords) {
+      lines.push(`${kw.term},${kw.count},${kw.percentage}%`);
+    }
+  }
+
+  // Keywords by Project section
+  lines.push('');
+  lines.push('KEYWORDS BY PROJECT');
+  lines.push('Project,Keyword,Count');
+
+  if (keywords.topKeywordsByProject) {
+    for (const [project, projectKeywords] of Object.entries(keywords.topKeywordsByProject)) {
+      if (Array.isArray(projectKeywords)) {
+        for (const kw of projectKeywords) {
+          const projectName = project.includes(',') ? `"${project}"` : project;
+          lines.push(`${projectName},${kw.term},${kw.count}`);
+        }
+      }
     }
   }
 

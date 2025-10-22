@@ -105,6 +105,13 @@ claude-logs --search "error handling" --json
 # Search with filters
 claude-logs --search "API" --filter-repo "my-api-project" --limit 10
 
+# Filter by keyword (NEW!)
+claude-logs --keyword typescript --json
+claude-logs --keywords "react,typescript" --json  # Multiple keywords (OR logic)
+
+# Combine keyword filter with search
+claude-logs --search "debugging" --keyword javascript --limit 10
+
 # List all conversations sorted by date
 claude-logs --json --limit 20
 
@@ -132,7 +139,8 @@ claude-logs --search "deployment" --filter-date "lastweek"
       "preview": "...discussing error handling strategies...",
       "relevance": 0.89,
       "matches": 12,
-      "highlightedPreview": "...discussing [HIGHLIGHT]error[/HIGHLIGHT] [HIGHLIGHT]handling[/HIGHLIGHT] strategies..."
+      "highlightedPreview": "...discussing [HIGHLIGHT]error[/HIGHLIGHT] [HIGHLIGHT]handling[/HIGHLIGHT] strategies...",
+      "keywords": ["typescript", "api", "error-handling", "debugging", "express"]
     }
   ]
 }

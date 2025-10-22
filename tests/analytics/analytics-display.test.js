@@ -15,7 +15,7 @@ describe('Analytics Display Content', () => {
     // Ensure we have fresh analytics
     await manager.computeAnalytics({ force: true });
     cache = manager.getCache();
-  });
+  }, 30000); // Increased timeout for keyword analytics computation
 
   describe('Analytics Data Structure', () => {
     it('should have all required sections', () => {
@@ -26,6 +26,7 @@ describe('Analytics Display Content', () => {
       expect(cache).toHaveProperty('userActions');
       expect(cache).toHaveProperty('milestones');
       expect(cache).toHaveProperty('comparative');
+      expect(cache).toHaveProperty('keywords');
     });
 
     it('should track custom slash commands (not built-in)', () => {
