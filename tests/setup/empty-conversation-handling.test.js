@@ -100,27 +100,25 @@ describe('Empty Conversation Handling', () => {
     });
   });
 
-  describe('Deletion behavior in test environment', () => {
-    it('should not prompt for deletion in test environment', async () => {
-      process.env.NODE_ENV = 'test';
-      
+  describe('Deletion behavior', () => {
+    it('should silently delete empty conversations', async () => {
       const emptyConversation = join(projectsDir, 'test-empty.jsonl');
       await writeFile(emptyConversation, '');
-      
+
       const conversation = {
         path: emptyConversation,
         project: 'test-empty',
         modified: Date.now()
       };
-      
+
       await expect(bulkExtractor.exportSingleConversation(conversation, exportDir))
         .rejects.toThrow('No messages found');
-      
-      // File should still exist (not deleted in test mode)
-      await expect(access(emptyConversation)).resolves.toBeUndefined();
-      
-      // No deletions should have been tracked
-      expect(bulkExtractor.deletedCount).toBe(0);
+
+      // File should be deleted automatically
+      await expect(access(emptyConversation)).rejects.toThrow('ENOENT');
+
+      // Deletion should have been tracked
+      expect(bulkExtractor.deletedCount).toBe(1);
     });
   });
 
@@ -152,17 +150,10 @@ describe('Empty Conversation Handling', () => {
     });
   });
 
-  describe('Delete all empty conversations flag', () => {
-    it('should track deleteAllEmpty flag state', () => {
-      expect(bulkExtractor.deleteAllEmpty).toBe(false);
-      
-      bulkExtractor.deleteAllEmpty = true;
-      expect(bulkExtractor.deleteAllEmpty).toBe(true);
-    });
-
+  describe('Empty conversation tracking', () => {
     it('should track deleted count', () => {
       expect(bulkExtractor.deletedCount).toBe(0);
-      
+
       bulkExtractor.deletedCount = 5;
       expect(bulkExtractor.deletedCount).toBe(5);
     });
@@ -170,16 +161,17 @@ describe('Empty Conversation Handling', () => {
     it('should return empty conversations in results', async () => {
       const emptyConversation = join(projectsDir, 'empty.jsonl');
       await writeFile(emptyConversation, '');
-      
+
       const conversations = [
         { path: emptyConversation, project: 'empty', modified: Date.now() }
       ];
-      
+
       const result = await bulkExtractor.extractAllConversations(conversations, exportDir);
-      
+
       expect(result.emptyConversations).toBeDefined();
       expect(result.emptyConversations).toHaveLength(1);
       expect(result.emptyConversations[0].project).toBe('empty');
+      expect(result.deleted).toBe(1); // Should have deleted it
     });
   });
 });

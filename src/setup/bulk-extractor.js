@@ -2,7 +2,6 @@ import { readFile, writeFile, mkdir, access, stat, unlink, utimes } from 'fs/pro
 import { join } from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
-import inquirer from 'inquirer';
 
 const colors = {
   primary: chalk.cyan,
@@ -27,7 +26,6 @@ class BulkExtractor {
     this.outputDir = options.outputDir || options.exportDir || join(process.env.HOME, '.claude', 'claude_conversations');
     this.exportDir = this.outputDir;
     this.setupManager = options.setupManager;
-    this.deleteAllEmpty = false; // Track if user wants to delete all empty conversations
     this.emptyConversations = []; // Track empty conversations found
     this.deletedCount = 0; // Track number of deleted conversations
     this.logger = options.logger || console;
@@ -215,7 +213,7 @@ class BulkExtractor {
     };
   }
 
-  async exportSingleConversation(conversation, exportDir, spinner = null) {
+  async exportSingleConversation(conversation, exportDir, _spinner = null) {
     // Read the JSONL file with error recovery
     let content;
     try {
@@ -306,60 +304,18 @@ class BulkExtractor {
         project: conversation.project,
         reason: emptyError
       });
-      
-      // Check if we should prompt for deletion
-      if (!this.deleteAllEmpty) {
-        // Only prompt if not in test environment or CI
-        const isTestEnv = process.env.NODE_ENV?.includes('test') || process.env.JEST_WORKER_ID || process.env.CI;
-        
-        if (!isTestEnv) {
-          // Stop the main spinner if we have one
-          if (spinner) {
-            spinner.stop();
-          }
 
-          console.log(colors.warning(`\n⚠️  Empty conversation found: ${conversation.project}`));
-          console.log(colors.muted(`   Path: ${conversation.path}`));
-          console.log(colors.muted(`   Reason: ${emptyError}\n`));
-
-          const { action } = await inquirer.prompt([{
-            type: 'list',
-            name: 'action',
-            message: 'What would you like to do?',
-            choices: [
-              { name: 'Keep - Leave this empty conversation', value: 'keep' },
-              { name: 'Delete - Remove this empty conversation', value: 'delete' },
-              { name: 'Delete All - Remove this and all future empty conversations', value: 'deleteAll' }
-            ],
-            default: 'keep'
-          }]);
-          
-          if (action === 'deleteAll') {
-            this.deleteAllEmpty = true;
-          }
-          
-          if (action === 'delete' || action === 'deleteAll') {
-            try {
-              await unlink(conversation.path);
-              this.deletedCount++;
-              console.log(colors.success(`✅ Deleted empty conversation: ${conversation.project}\n`));
-            } catch (deleteError) {
-              console.error(colors.error(`❌ Failed to delete ${conversation.path}: ${deleteError.message}\n`));
-            }
-          } else {
-            console.log(colors.info(`📁 Keeping empty conversation: ${conversation.project}\n`));
-          }
-          
-          // Restart spinner
-          spinner.start();
+      // Always delete empty conversations silently
+      try {
+        await unlink(conversation.path);
+        this.deletedCount++;
+        // Only log in debug mode to avoid cluttering output
+        if (process.env.DEBUG) {
+          console.log(colors.muted(`🗑️  Deleted empty conversation: ${conversation.project}`));
         }
-      } else {
-        // Auto-delete if user chose "delete all"
-        try {
-          await unlink(conversation.path);
-          this.deletedCount++;
-          console.log(colors.success(`🗑️  Auto-deleted empty conversation: ${conversation.project}`));
-        } catch (deleteError) {
+      } catch (deleteError) {
+        // Log deletion errors but don't stop the process
+        if (process.env.DEBUG) {
           console.error(colors.error(`❌ Failed to delete ${conversation.path}: ${deleteError.message}`));
         }
       }
