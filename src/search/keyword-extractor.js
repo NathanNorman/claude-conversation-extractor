@@ -89,8 +89,11 @@ const CODE_PATTERNS = [
   /^https?:\/\//,                  // URLs
   /^[a-f0-9]{8,}$/,                // Hex IDs (likely UUIDs)
   /^[A-Z_][A-Z0-9_]+$/,            // CONSTANT_NAMES (often not meaningful)
-  /^\d+[a-z]+$/,                   // Numbers with letters (34m, 50am, 8gb, 255mb, 10pm)
-  /^[a-z]+\d+[a-z]*$/              // Letters with numbers (m34, s12, gb8, mb255)
+  /^\d+[a-z]+$/,                   // Numbers with letters (34m, 50am, 8gb, 255mb, 10pm, 20ms, 500ms)
+  /^[a-z]+\d+[a-z]*$/,             // Letters with numbers (m34, s12, gb8, mb255, 2m1)
+  /^\d+(st|nd|rd|th)$/,            // Ordinals (1st, 2nd, 3rd, 4th)
+  /__/,                            // Contains double underscore (mcp__mcp, __dirname)
+  /^\d+[a-z]*\d+$/                 // Mixed digit patterns (2m1, 3x4, 10k5)
 ];
 
 /**
