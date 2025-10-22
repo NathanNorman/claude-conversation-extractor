@@ -213,13 +213,39 @@ export class KeywordExtractor {
       .filter(item => !shouldFilterTerm(item.term))
       .filter(item => item.tfidf > 0)
       .sort((a, b) => b.tfidf - a.tfidf)
-      .slice(0, count)
       .map(item => ({
         term: item.term,
         score: Math.round(item.tfidf * 100) / 100  // Round to 2 decimals
       }));
 
-    return keywords;
+    // Deduplicate plurals: if both "word" and "words" exist, keep only the one with higher score
+    const deduplicated = [];
+    const seen = new Set();
+
+    for (const kw of keywords) {
+      const term = kw.term;
+      const singular = term.endsWith('s') ? term.slice(0, -1) : term;
+      const plural = term + 's';
+
+      // Check if we've already added the singular or plural form
+      if (seen.has(singular) || seen.has(plural)) {
+        continue; // Skip this duplicate
+      }
+
+      // Mark both forms as seen
+      seen.add(term);
+      seen.add(singular);
+      seen.add(plural);
+
+      deduplicated.push(kw);
+
+      // Stop when we have enough
+      if (deduplicated.length >= count) {
+        break;
+      }
+    }
+
+    return deduplicated;
   }
 
   /**
