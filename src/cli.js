@@ -2169,12 +2169,25 @@ async function showConversationActions(conversation) {
   console.log(colors.dim(`Modified: ${conversation.modified.toLocaleString()}`));
   console.log(colors.dim(`Size: ${(fileSize / 1024).toFixed(1)} KB\n`));
   
+  // Extract session ID from conversation
+  let sessionId = null;
+  const conversationPath = conversation.path || conversation.originalPath;
+
+  // Try to get session ID from filename (format: UUID.jsonl)
+  if (conversationPath) {
+    const filenameMatch = conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    if (filenameMatch) {
+      sessionId = filenameMatch[1];
+    }
+  }
+
   const { action } = await inquirer.prompt([
     {
       type: 'list',
       name: 'action',
       message: 'What would you like to do?',
       choices: [
+        { name: '🔄 Resume session in Claude Code', value: 'resume', disabled: !sessionId },
         { name: '📤 Export to markdown', value: 'export' },
         { name: '📋 Copy file path', value: 'copy' },
         { name: '📂 Show file location', value: 'location' },
@@ -2187,11 +2200,49 @@ async function showConversationActions(conversation) {
   ]);
   
   switch (action) {
+  case 'resume':
+    {
+      console.clear();
+      console.log(colors.info('\n🔄 Resume Claude Code Session\n'));
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.primary('\nProject:'));
+      console.log(colors.highlight(`  ${conversation.project}\n`));
+      console.log(colors.primary('Session ID:'));
+      console.log(colors.highlight(`  ${sessionId}\n`));
+      console.log(colors.primary('Command to resume:'));
+      console.log(colors.highlight(`  claude --resume ${sessionId}\n`));
+
+      // Copy command to clipboard
+      const resumeCommand = `claude --resume ${sessionId}`;
+      const copied = await copyToClipboard(resumeCommand);
+
+      if (copied) {
+        console.log(colors.success('✅ Command copied to clipboard!\n'));
+        console.log(colors.dim('Paste and run in your terminal to resume this session.\n'));
+      } else {
+        console.log(colors.dim('Copy and run the command above to resume.\n'));
+      }
+
+      console.log(colors.dim('━'.repeat(60)));
+      console.log(colors.dim('\nThis will continue the actual Claude Code session'));
+      console.log(colors.dim('with all previous context and conversation history.\n'));
+
+      await inquirer.prompt([{
+        type: 'input',
+        name: 'continue',
+        message: 'Press Enter to return to menu...',
+        prefix: ''
+      }]);
+
+      await showConversationActions(conversation);
+    }
+    break;
+
   case 'export':
     await exportConversation(conversation);
     await showConversationActions(conversation);
     break;
-      
+
   case 'copy':
     {
       const success = await copyToClipboard(conversation.path);
