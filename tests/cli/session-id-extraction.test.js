@@ -4,20 +4,26 @@
  */
 
 describe('Session ID Extraction for Resume Feature', () => {
-  test('should extract session ID from JSONL path', () => {
+  test('should extract session ID from JSONL path in .claude/projects', () => {
     const conversationPath = '/Users/test/.claude/projects/-Users-test-project/6332f742-97f3-47b2-ad9b-fefae2f63e68.jsonl';
-    const match = conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+
+    // Only extract if in .claude/projects and ends with .jsonl (resumable sessions)
+    const isResumable = conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl');
+    const match = isResumable ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
     const sessionId = match ? match[1] : null;
 
     expect(sessionId).toBe('6332f742-97f3-47b2-ad9b-fefae2f63e68');
   });
 
-  test('should extract session ID from markdown export path', () => {
+  test('should NOT extract session ID from archived markdown export (not resumable)', () => {
     const conversationPath = '~/.claude/claude_conversations/test-project_6332f742-97f3-47b2-ad9b-fefae2f63e68_2025-10-22.md';
-    const match = conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+
+    // Archived markdown exports are NOT resumable - only JSONL files in .claude/projects are
+    const isResumable = conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl');
+    const match = isResumable ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
     const sessionId = match ? match[1] : null;
 
-    expect(sessionId).toBe('6332f742-97f3-47b2-ad9b-fefae2f63e68');
+    expect(sessionId).toBeNull(); // Should NOT extract from archived markdown
   });
 
   test('should handle path without session ID', () => {
@@ -78,7 +84,8 @@ describe('Session ID Extraction for Resume Feature', () => {
     };
 
     const conversationPath = conversation.path || conversation.originalPath;
-    const match = conversationPath ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
+    const isResumable = conversationPath && conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl');
+    const match = isResumable ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
     const sessionId = match ? match[1] : null;
 
     expect(sessionId).toBe('6332f742-97f3-47b2-ad9b-fefae2f63e68');
@@ -92,9 +99,25 @@ describe('Session ID Extraction for Resume Feature', () => {
     };
 
     const conversationPath = conversation.path || conversation.originalPath;
-    const match = conversationPath ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
+    const isResumable = conversationPath && conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl');
+    const match = isResumable ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
     const sessionId = match ? match[1] : null;
 
     expect(sessionId).toBe('abc123de-4567-89ab-cdef-123456789012');
+  });
+
+  test('should reject archived conversation even with valid session ID format', () => {
+    const conversation = {
+      path: '/Users/test/.claude/claude_conversations/project_abc123de-4567-89ab-cdef-123456789012_2025-10-22.md',
+      originalPath: null,
+      project: 'test-project'
+    };
+
+    const conversationPath = conversation.path || conversation.originalPath;
+    const isResumable = conversationPath && conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl');
+    const match = isResumable ? conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) : null;
+    const sessionId = match ? match[1] : null;
+
+    expect(sessionId).toBeNull(); // Archived conversations are NOT resumable
   });
 });

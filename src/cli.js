@@ -2170,12 +2170,14 @@ async function showConversationActions(conversation) {
   console.log(colors.dim(`Modified: ${conversation.modified.toLocaleString()}`));
   console.log(colors.dim(`Size: ${(fileSize / 1024).toFixed(1)} KB\n`));
   
-  // Extract session ID from conversation
+  // Extract session ID from conversation - only for JSONL files in .claude/projects
+  // (Archived markdown exports can't be resumed even if they have session IDs)
   let sessionId = null;
   const conversationPath = conversation.path || conversation.originalPath;
 
-  // Try to get session ID from filename (format: UUID.jsonl)
-  if (conversationPath) {
+  // Only extract session ID if this is a JSONL file in .claude/projects (resumable)
+  // Archived conversations in .claude/claude_conversations are NOT resumable
+  if (conversationPath && conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl')) {
     const filenameMatch = conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
     if (filenameMatch) {
       sessionId = filenameMatch[1];
