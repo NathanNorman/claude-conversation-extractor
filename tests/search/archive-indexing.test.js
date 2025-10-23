@@ -28,19 +28,21 @@ describe('Archive Conversation Indexing', () => {
     }
   });
 
-  describe('Markdown File Scanning', () => {
+  describe('JSONL File Scanning', () => {
     test('should index files without claude-conversation prefix', async () => {
-      // Create markdown files with various naming patterns
+      // Create JSONL files with various naming patterns
       const files = [
-        'claude-conversation-2025-09-29-abc123.md',
-        'Debugging_Session_1.md',
-        'Project_Notes.md',
-        '-Users-nathan-toast-analytics_2025-09-25.md'
+        { name: 'claude-conversation-2025-09-29-abc123.jsonl', sessionId: 'session-1' },
+        { name: 'Debugging_Session_1.jsonl', sessionId: 'session-2' },
+        { name: 'Project_Notes.jsonl', sessionId: 'session-3' },
+        { name: '-Users-nathan-toast-analytics_2025-09-25.jsonl', sessionId: 'session-4' }
       ];
 
       for (const file of files) {
-        const content = `# Claude Conversation\n\nProject: test\nDate: 2025-09-29\n\n## 👤 User\n\nTest message\n\n## 🤖 Assistant\n\nTest response`;
-        await writeFile(join(exportDir, file), content);
+        const content = `{"type":"summary","summary":"Test Conversation","leafUuid":"${file.sessionId}"}
+{"type":"user","message":{"role":"user","content":"Test message"},"timestamp":"2025-09-29T10:00:00.000Z","sessionId":"${file.sessionId}","uuid":"msg-1"}
+{"type":"assistant","message":{"role":"assistant","content":"Test response"},"timestamp":"2025-09-29T10:00:01.000Z","sessionId":"${file.sessionId}","uuid":"msg-2"}`;
+        await writeFile(join(exportDir, file.name), content);
       }
 
       const stats = await engine.buildIndex();
@@ -50,20 +52,11 @@ describe('Archive Conversation Indexing', () => {
     });
 
     test('should exclude documentation files', async () => {
-      const validConversation = `# Claude Conversation
+      const validConversation = `{"type":"summary","summary":"Real Conversation","leafUuid":"real-uuid"}
+{"type":"user","message":{"role":"user","content":"This is a real conversation."},"timestamp":"2025-09-29T10:00:00.000Z","sessionId":"real-session","uuid":"msg-1"}
+{"type":"assistant","message":{"role":"assistant","content":"This is a response."},"timestamp":"2025-09-29T10:00:01.000Z","sessionId":"real-session","uuid":"msg-2"}`;
 
-Project: test-project
-Date: 2025-09-29
-
-## 👤 User
-
-This is a real conversation.
-
-## 🤖 Assistant
-
-This is a response.`;
-
-      await writeFile(join(exportDir, 'conversation.md'), validConversation);
+      await writeFile(join(exportDir, 'conversation.jsonl'), validConversation);
       await writeFile(join(exportDir, 'README.md'), '# Test content');
       await writeFile(join(exportDir, 'CHANGELOG.md'), '# Test content');
       await writeFile(join(exportDir, 'TODO.md'), '# Test content');
@@ -71,7 +64,7 @@ This is a response.`;
 
       const stats = await engine.buildIndex();
 
-      // Should only index conversation.md, not the doc files
+      // Should only index conversation.jsonl, not the doc files
       expect(stats.totalDocuments).toBe(1);
     });
 
@@ -83,13 +76,14 @@ This is a response.`;
       await mkdir(subdir1, { recursive: true });
       await mkdir(subdir2, { recursive: true });
 
-      const content = `# Claude Conversation\n\nProject: test\nSession ID: 12345678-1234-1234-1234-123456789012\n\n## 👤 User\n\nTest`;
+      const content = `{"type":"summary","summary":"Test","leafUuid":"12345678-1234-1234-1234-123456789012"}
+{"type":"user","message":{"role":"user","content":"Test"},"timestamp":"2025-09-29T10:00:00.000Z","sessionId":"12345678-1234-1234-1234-123456789012","uuid":"msg-1"}`;
 
       // Files in subdirectories should be ignored
-      await writeFile(join(subdir1, 'conv1.md'), content);
-      await writeFile(join(subdir2, 'conv2.md'), content);
+      await writeFile(join(subdir1, 'conv1.jsonl'), content);
+      await writeFile(join(subdir2, 'conv2.jsonl'), content);
       // Only root level file should be indexed
-      await writeFile(join(exportDir, 'root-conv.md'), content);
+      await writeFile(join(exportDir, 'root-conv.jsonl'), content);
 
       const stats = await engine.buildIndex();
 
@@ -103,8 +97,9 @@ This is a response.`;
       // Create index with many conversations
       const conversations = [];
       for (let i = 0; i < 500; i++) {
-        const content = `# Claude Conversation\n\nProject: archived-${i}\n\n## 👤 User\n\nTest ${i}`;
-        const filename = `archived-conv-${i}.md`;
+        const content = `{"type":"summary","summary":"Archived conversation ${i}","leafUuid":"archived-${i}"}
+{"type":"user","message":{"role":"user","content":"Test ${i}"},"timestamp":"2025-09-29T10:00:00.000Z","sessionId":"session-${i}","uuid":"msg-${i}"}`;
+        const filename = `archived-conv-${i}.jsonl`;
         await writeFile(join(exportDir, filename), content);
       }
 
@@ -127,8 +122,9 @@ This is a response.`;
 
     test('should rebuild when JSONL files are newer for non-archive', async () => {
       // Create small index (not an archive)
-      const content = `# Claude Conversation\n\nProject: test\n\n## 👤 User\n\nTest`;
-      await writeFile(join(exportDir, 'conv.md'), content);
+      const content = `{"type":"summary","summary":"Test","leafUuid":"test-uuid"}
+{"type":"user","message":{"role":"user","content":"Test"},"timestamp":"2025-09-29T10:00:00.000Z","sessionId":"test-session","uuid":"msg-1"}`;
+      await writeFile(join(exportDir, 'conv.jsonl'), content);
 
       await engine.buildIndex();
       await engine.saveIndex();
@@ -156,9 +152,11 @@ This is a response.`;
 
   describe('Full Text Storage', () => {
     test('should store fullText in index for instant highlighting', async () => {
-      const content = `# Claude Conversation\n\nProject: test\nDate: 2025-09-29\n\n## 👤 User\n\nThis is a long conversation with lots of content that should be indexed for searching and highlighting.\n\n## 🤖 Assistant\n\nHere is a detailed response with even more content.`;
+      const content = `{"type":"summary","summary":"Long Conversation","leafUuid":"long-uuid"}
+{"type":"user","message":{"role":"user","content":"This is a long conversation with lots of content that should be indexed for searching and highlighting."},"timestamp":"2025-09-29T10:00:00.000Z","sessionId":"long-session","uuid":"msg-1"}
+{"type":"assistant","message":{"role":"assistant","content":"Here is a detailed response with even more content."},"timestamp":"2025-09-29T10:00:01.000Z","sessionId":"long-session","uuid":"msg-2"}`;
 
-      await writeFile(join(exportDir, 'test-conv.md'), content);
+      await writeFile(join(exportDir, 'test-conv.jsonl'), content);
 
       await engine.buildIndex();
       await engine.saveIndex();
@@ -180,25 +178,13 @@ This is a response.`;
     });
   });
 
-  describe('Markdown Parsing', () => {
-    test('should extract content from markdown format', async () => {
-      const content = `# Claude Conversation
+  describe('JSONL Parsing', () => {
+    test('should extract content from JSONL format', async () => {
+      const content = `{"type":"summary","summary":"JavaScript Help","leafUuid":"abc123"}
+{"type":"user","message":{"role":"user","content":"Can you help me with JavaScript?"},"timestamp":"2025-09-29T12:00:00.000Z","sessionId":"abc123","uuid":"msg-1"}
+{"type":"assistant","message":{"role":"assistant","content":"Of course! I can help with JavaScript."},"timestamp":"2025-09-29T12:00:01.000Z","sessionId":"abc123","uuid":"msg-2"}`;
 
-Project: test-project
-Session ID: abc123
-Date: 2025-09-29T12:00:00.000Z
-
----
-
-## 👤 User
-
-Can you help me with JavaScript?
-
-## 🤖 Assistant
-
-Of course! I can help with JavaScript.`;
-
-      await writeFile(join(exportDir, 'test.md'), content);
+      await writeFile(join(exportDir, 'test.jsonl'), content);
 
       const stats = await engine.buildIndex();
 
@@ -209,10 +195,10 @@ Of course! I can help with JavaScript.`;
       expect(result.totalFound).toBeGreaterThan(0);
     });
 
-    test('should handle malformed markdown gracefully', async () => {
+    test('should handle malformed JSONL gracefully', async () => {
       const content = `Not a proper conversation format`;
 
-      await writeFile(join(exportDir, 'malformed.md'), content);
+      await writeFile(join(exportDir, 'malformed.jsonl'), content);
 
       const stats = await engine.buildIndex();
 

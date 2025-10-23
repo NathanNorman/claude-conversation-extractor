@@ -27,19 +27,9 @@ describe('Incremental Indexing', () => {
   describe('updateIndex()', () => {
     test('should add only new files to existing index', async () => {
       // Create initial files
-      const file1 = path.join(testEnv.conversationsDir, 'conv1.md');
-      await fs.writeFile(file1, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** 11111111-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Test message 1
-`);
+      const file1 = path.join(testEnv.conversationsDir, 'conv1.jsonl');
+      await fs.writeFile(file1, `{"type":"summary","summary":"Test 1","leafUuid":"11111111-1111-1111-1111-111111111111"}
+{"type":"user","message":{"role":"user","content":"Test message 1"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-1"}`);
 
       // Build initial index
       await miniSearch.buildIndex();
@@ -52,19 +42,9 @@ Test message 1
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Add a new file
-      const file2 = path.join(testEnv.conversationsDir, 'conv2.md');
-      await fs.writeFile(file2, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** 22222222-2222-2222-2222-222222222222
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Test message 2
-`);
+      const file2 = path.join(testEnv.conversationsDir, 'conv2.jsonl');
+      await fs.writeFile(file2, `{"type":"summary","summary":"Test 2","leafUuid":"22222222-2222-2222-2222-222222222222"}
+{"type":"user","message":{"role":"user","content":"Test message 2"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"22222222-2222-2222-2222-222222222222","uuid":"msg-2"}`);
 
       // Load index and do incremental update
       await miniSearch.loadIndex();
@@ -76,19 +56,9 @@ Test message 2
 
     test('should skip files already in index', async () => {
       // Create and index a file
-      const file1 = path.join(testEnv.conversationsDir, 'conv1.md');
-      await fs.writeFile(file1, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** 11111111-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Test message
-`);
+      const file1 = path.join(testEnv.conversationsDir, 'conv1.jsonl');
+      await fs.writeFile(file1, `{"type":"summary","summary":"Test","leafUuid":"11111111-1111-1111-1111-111111111111"}
+{"type":"user","message":{"role":"user","content":"Test message"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-1"}`);
 
       await miniSearch.buildIndex();
       await miniSearch.saveIndex();
@@ -101,19 +71,9 @@ Test message
     });
 
     test('should detect modified files based on timestamp', async () => {
-      const file1 = path.join(testEnv.conversationsDir, 'conv1.md');
-      await fs.writeFile(file1, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** 11111111-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Original message
-`);
+      const file1 = path.join(testEnv.conversationsDir, 'conv1.jsonl');
+      await fs.writeFile(file1, `{"type":"summary","summary":"Original","leafUuid":"11111111-1111-1111-1111-111111111111"}
+{"type":"user","message":{"role":"user","content":"Original message"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-1"}`);
 
       await miniSearch.buildIndex();
       await miniSearch.saveIndex();
@@ -122,18 +82,8 @@ Original message
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Modify the file (touch will update mtime)
-      await fs.writeFile(file1, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** 11111111-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Updated message with more content
-`);
+      await fs.writeFile(file1, `{"type":"summary","summary":"Updated","leafUuid":"11111111-1111-1111-1111-111111111111"}
+{"type":"user","message":{"role":"user","content":"Updated message with more content"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-1"}`);
 
       // Update index
       await miniSearch.loadIndex();
@@ -148,19 +98,10 @@ Updated message with more content
     test('should do incremental update for few new files', async () => {
       // Create initial files
       for (let i = 1; i <= 10; i++) {
-        const file = path.join(testEnv.conversationsDir, `conv${i}.md`);
-        await fs.writeFile(file, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** ${i}${i}${i}${i}${i}${i}${i}${i}-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Test ${i}
-`);
+        const file = path.join(testEnv.conversationsDir, `conv${i}.jsonl`);
+        const sessionId = `${i}${i}${i}${i}${i}${i}${i}${i}-1111-1111-1111-111111111111`;
+        await fs.writeFile(file, `{"type":"summary","summary":"Test ${i}","leafUuid":"${sessionId}"}
+{"type":"user","message":{"role":"user","content":"Test ${i}"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"${sessionId}","uuid":"msg-${i}"}`);
       }
 
       await miniSearch.buildIndex();
@@ -168,19 +109,9 @@ Test ${i}
 
       // Wait and add 1 new file (10% - below 20% threshold)
       await new Promise(resolve => setTimeout(resolve, 100));
-      const newFile = path.join(testEnv.conversationsDir, 'conv11.md');
-      await fs.writeFile(newFile, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** 11111111-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-New conversation
-`);
+      const newFile = path.join(testEnv.conversationsDir, 'conv11.jsonl');
+      await fs.writeFile(newFile, `{"type":"summary","summary":"New conversation","leafUuid":"11111111-1111-1111-1111-111111111111"}
+{"type":"user","message":{"role":"user","content":"New conversation"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-11"}`);
 
       await miniSearch.loadIndex();
       const result = await miniSearch.smartUpdate();
@@ -192,19 +123,10 @@ New conversation
     test('should do full rebuild for many new files', async () => {
       // Create initial files
       for (let i = 1; i <= 10; i++) {
-        const file = path.join(testEnv.conversationsDir, `conv${i}.md`);
-        await fs.writeFile(file, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** ${i}${i}${i}${i}${i}${i}${i}${i}-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Test ${i}
-`);
+        const file = path.join(testEnv.conversationsDir, `conv${i}.jsonl`);
+        const sessionId = `${i}${i}${i}${i}${i}${i}${i}${i}-1111-1111-1111-111111111111`;
+        await fs.writeFile(file, `{"type":"summary","summary":"Test ${i}","leafUuid":"${sessionId}"}
+{"type":"user","message":{"role":"user","content":"Test ${i}"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"${sessionId}","uuid":"msg-${i}"}`);
       }
 
       await miniSearch.buildIndex();
@@ -213,19 +135,10 @@ Test ${i}
       // Wait and add 5 new files (50% - above 20% threshold)
       await new Promise(resolve => setTimeout(resolve, 100));
       for (let i = 11; i <= 15; i++) {
-        const file = path.join(testEnv.conversationsDir, `conv${i}.md`);
-        await fs.writeFile(file, `# Claude Code Conversation
-
-**Project:** test-project
-**Session ID:** ${i}${i}${i}${i}${i}${i}${i}${i}-1111-1111-1111-111111111111
-**Date:** 2025-10-01
-
----
-
-## 👤 User
-
-Test ${i}
-`);
+        const file = path.join(testEnv.conversationsDir, `conv${i}.jsonl`);
+        const sessionId = `${i}${i}${i}${i}${i}${i}${i}${i}-1111-1111-1111-111111111111`;
+        await fs.writeFile(file, `{"type":"summary","summary":"Test ${i}","leafUuid":"${sessionId}"}
+{"type":"user","message":{"role":"user","content":"Test ${i}"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"${sessionId}","uuid":"msg-${i}"}`);
       }
 
       await miniSearch.loadIndex();

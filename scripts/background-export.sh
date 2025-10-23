@@ -91,14 +91,14 @@ while IFS= read -r jsonl_path; do
 
     log_stats "Processing: $project_name / $session_id"
 
-    # Check if already exported recently (within last minute)
+    # Check if already exported (JSONL archive exists and is up to date)
     file_date=$(date -r "$jsonl_path" "+%Y-%m-%d")
-    export_pattern="${EXPORT_DIR}/${project_name}_${session_id}_*.md"
+    export_pattern="${EXPORT_DIR}/${project_name}_${session_id}.jsonl"
 
     # Check if export exists and is recent
     NEEDS_EXPORT=true
-    if ls $export_pattern 2>/dev/null | head -1 > /dev/null; then
-        latest_export=$(ls -t $export_pattern 2>/dev/null | head -1)
+    if [ -f "$export_pattern" ]; then
+        latest_export="$export_pattern"
         if [ -n "$latest_export" ]; then
             export_mtime=$(stat -f %m "$latest_export" 2>/dev/null || echo "0")
             jsonl_mtime=$(stat -f %m "$jsonl_path" 2>/dev/null || echo "0")

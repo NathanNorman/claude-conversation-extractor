@@ -276,6 +276,117 @@ export class MiniSearchEngine {
   }
 
   /**
+   * Parse JSONL conversation file to extract conversation content
+   * @param {string} jsonlPath - Path to JSONL file
+   * @returns {Promise<Object>} Parsed conversation
+   */
+  async parseJsonlConversation(jsonlPath) {
+    const content = await readFile(jsonlPath, 'utf-8');
+    const lines = content.trim().split('\n').filter(line => line.trim());
+
+    const conversation = {
+      project: null,
+      sessionId: null,
+      date: null,
+      modified: null,
+      messages: [],
+      fullText: '',
+      wordCount: 0,
+      messageCount: 0,
+      // Analytics metadata
+      userTurns: 0,
+      assistantTurns: 0,
+      totalTurns: 0,
+      toolCount: 0,
+      firstTimestamp: null,
+      lastTimestamp: null,
+      durationMs: 0
+    };
+
+    // Parse JSONL lines
+    for (const line of lines) {
+      try {
+        const data = JSON.parse(line);
+
+        // Extract session ID from first message with it
+        if (!conversation.sessionId && data.sessionId) {
+          conversation.sessionId = data.sessionId;
+        }
+
+        // Extract first and last timestamps
+        if (data.timestamp) {
+          if (!conversation.firstTimestamp) {
+            conversation.firstTimestamp = data.timestamp;
+          }
+          conversation.lastTimestamp = data.timestamp;
+        }
+
+        // Look for user or assistant messages
+        if ((data.type === 'user' || data.type === 'assistant') && data.message && !data.isMeta) {
+          let messageContent = '';
+
+          // Handle content array format (with tool_use blocks)
+          if (Array.isArray(data.message.content)) {
+            const textParts = data.message.content
+              .filter(item => item.type === 'text')
+              .map(item => item.text);
+            messageContent = textParts.join('\n');
+          } else if (typeof data.message.content === 'string') {
+            messageContent = data.message.content;
+          }
+
+          if (messageContent.trim()) {
+            conversation.messages.push({
+              role: data.message.role,
+              content: messageContent,
+              timestamp: data.timestamp
+            });
+
+            // Add to fullText for searching
+            conversation.fullText += ' ' + messageContent;
+
+            // Count turns
+            if (data.message.role === 'user') {
+              conversation.userTurns++;
+            } else if (data.message.role === 'assistant') {
+              conversation.assistantTurns++;
+            }
+          }
+        }
+      } catch (error) {
+        // Skip malformed lines
+        this.logger.debug(`Skipping malformed JSONL line: ${error.message}`);
+      }
+    }
+
+    // Calculate metrics
+    conversation.fullText = conversation.fullText.trim();
+    conversation.wordCount = conversation.fullText.split(/\s+/).length;
+    conversation.messageCount = conversation.messages.length;
+    conversation.totalTurns = conversation.userTurns + conversation.assistantTurns;
+
+    // Calculate duration if we have timestamps
+    if (conversation.firstTimestamp && conversation.lastTimestamp) {
+      const first = new Date(conversation.firstTimestamp);
+      const last = new Date(conversation.lastTimestamp);
+      conversation.durationMs = last.getTime() - first.getTime();
+    }
+
+    // Set modified date (use last timestamp or first timestamp)
+    conversation.modified = conversation.lastTimestamp || conversation.firstTimestamp;
+
+    // If no session ID found, extract from filename
+    if (!conversation.sessionId) {
+      const filenameMatch = basename(jsonlPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (filenameMatch) {
+        conversation.sessionId = filenameMatch[1];
+      }
+    }
+
+    return conversation;
+  }
+
+  /**
    * Initialize MiniSearch with optimal configuration for our use case
    */
   initializeMiniSearch() {
@@ -460,7 +571,7 @@ export class MiniSearchEngine {
         });
       }
     } else {
-      // NEW: Read from exported markdown files instead of JSONL
+      // Read from exported JSONL files (unified storage format)
       // This ensures index persists even after Claude Code deletes source files
       if (!existsSync(this.exportDir)) {
         this.logger.warn(`Export directory does not exist: ${this.exportDir}`);
@@ -470,8 +581,8 @@ export class MiniSearchEngine {
         return this.stats;
       }
 
-      // Find all markdown files in exportDir (both root and subdirectories)
-      const markdownFiles = [];
+      // Find all JSONL files in exportDir
+      const jsonlFiles = [];
       try {
         const scanDirectory = async (dir, prefix = '') => {
           const entries = await readdir(dir);
@@ -489,8 +600,8 @@ export class MiniSearchEngine {
               // Skip subdirectories - we only want root level files now
               // All conversations have been consolidated to root
               continue;
-            } else if (entry.endsWith('.md') && !this.isDocumentationFile(entry)) {
-              markdownFiles.push({
+            } else if (entry.endsWith('.jsonl') && !this.isDocumentationFile(entry)) {
+              jsonlFiles.push({
                 path: fullPath,
                 project: prefix || basename(dirname(fullPath)),
                 filename: entry,
@@ -510,29 +621,38 @@ export class MiniSearchEngine {
         return this.stats;
       }
 
-      // Process markdown files instead of JSONL
-      for (const file of markdownFiles) {
+      // Process JSONL files
+      for (const file of jsonlFiles) {
         const filePath = file.path;
         const _project = file.project;
 
         try {
-          // Parse the markdown conversation
-          const conversation = await this.parseMarkdownConversation(filePath);
+          // Parse the JSONL conversation
+          const conversation = await this.parseJsonlConversation(filePath);
 
           if (!conversation || !conversation.fullText.trim()) {
             continue; // Skip empty conversations
           }
 
-          // Create document for indexing from parsed markdown
+          // Create document for indexing from parsed JSONL
           const words = conversation.fullText.trim().split(/\s+/);
           const preview = words.slice(0, 35).join(' ');
 
           // Extract session ID from filename for unique ID
-          const sessionIdMatch = file.filename.match(/([a-f0-9]{8})\.md$/);
-          const sessionId = sessionIdMatch ? sessionIdMatch[1] : conversationIndex.toString();
+          const sessionIdMatch = file.filename.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+          const sessionId = sessionIdMatch ? sessionIdMatch[1] : (conversation.sessionId || conversationIndex.toString());
 
-          // Use clean display name for project
-          const rawProject = conversation.project || _project;
+          // Extract project name from filename (format: projectname_session-id.jsonl)
+          // Split on session ID to get project name part
+          let projectFromFilename = file.filename;
+          if (sessionIdMatch) {
+            projectFromFilename = file.filename.split(sessionIdMatch[1])[0].replace(/_+$/, ''); // Remove trailing underscores
+          } else {
+            projectFromFilename = file.filename.replace('.jsonl', '');
+          }
+
+          // Use project from filename first, fallback to parsed or directory
+          const rawProject = projectFromFilename || conversation.project || _project;
           const displayProject = this.getDisplayName(rawProject);
 
           // Use parsed date if it exists and looks valid, otherwise use file mtime
@@ -1350,8 +1470,8 @@ export class MiniSearchEngine {
     let newFileCount = 0;
 
     for (const file of files) {
-      // Skip backups, hidden files, and non-md files
-      if (file.startsWith('.') || file.startsWith('archive-backup') || !file.endsWith('.md') || this.isDocumentationFile(file)) {
+      // Skip backups, hidden files, and non-jsonl files
+      if (file.startsWith('.') || file.startsWith('archive-backup') || !file.endsWith('.jsonl') || this.isDocumentationFile(file)) {
         continue;
       }
       const filePath = join(this.exportDir, file);
@@ -1413,8 +1533,8 @@ export class MiniSearchEngine {
     const newFiles = [];
 
     for (const file of files) {
-      // Skip backups, hidden files, and non-md files
-      if (file.startsWith('.') || file.startsWith('archive-backup') || !file.endsWith('.md') || this.isDocumentationFile(file)) {
+      // Skip backups, hidden files, and non-jsonl files
+      if (file.startsWith('.') || file.startsWith('archive-backup') || !file.endsWith('.jsonl') || this.isDocumentationFile(file)) {
         continue;
       }
 
@@ -1454,7 +1574,7 @@ export class MiniSearchEngine {
 
     for (const file of newFiles) {
       try {
-        const conversation = await this.parseMarkdownConversation(file.path);
+        const conversation = await this.parseJsonlConversation(file.path);
 
         if (!conversation.sessionId) {
           this.logger.warn(`Skipping ${file.name}: no session ID`);
@@ -1472,7 +1592,15 @@ export class MiniSearchEngine {
         }
         processedSessionIds.add(conversation.sessionId);
 
-        const rawProject = conversation.project || 'Unknown';
+        // Extract project name from filename (format: projectname_session-id.jsonl)
+        let projectFromFilename = file.name || basename(file.path);
+        if (conversation.sessionId) {
+          projectFromFilename = projectFromFilename.split(conversation.sessionId)[0].replace(/_+$/, '');
+        } else {
+          projectFromFilename = projectFromFilename.replace('.jsonl', '');
+        }
+
+        const rawProject = projectFromFilename || conversation.project || 'Unknown';
         const displayProject = this.getDisplayName(rawProject);
 
         // Use parsed date if it has time component (full ISO), otherwise use file mtime

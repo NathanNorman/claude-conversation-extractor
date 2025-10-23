@@ -2170,17 +2170,24 @@ async function showConversationActions(conversation) {
   console.log(colors.dim(`Modified: ${conversation.modified.toLocaleString()}`));
   console.log(colors.dim(`Size: ${(fileSize / 1024).toFixed(1)} KB\n`));
   
-  // Extract session ID from conversation - only for JSONL files in .claude/projects
-  // (Archived markdown exports can't be resumed even if they have session IDs)
+  // Extract session ID from conversation
   let sessionId = null;
+  let isActiveSession = false;
+  let isArchivedJsonl = false;
   const conversationPath = conversation.path || conversation.originalPath;
 
-  // Only extract session ID if this is a JSONL file in .claude/projects (resumable)
-  // Archived conversations in .claude/claude_conversations are NOT resumable
-  if (conversationPath && conversationPath.includes('.claude/projects/') && conversationPath.endsWith('.jsonl')) {
+  // Check if this is a JSONL file and extract session ID
+  if (conversationPath && conversationPath.endsWith('.jsonl')) {
     const filenameMatch = conversationPath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
     if (filenameMatch) {
       sessionId = filenameMatch[1];
+
+      // Determine if active or archived
+      if (conversationPath.includes('.claude/projects/')) {
+        isActiveSession = true;
+      } else if (conversationPath.includes('.claude/claude_conversations/')) {
+        isArchivedJsonl = true;
+      }
     }
   }
 
@@ -2206,6 +2213,60 @@ async function showConversationActions(conversation) {
   case 'resume':
     {
       console.clear();
+
+      // If archived, restore it first
+      if (isArchivedJsonl) {
+        console.log(colors.info('\n♻️  Restoring Archived Session\n'));
+        console.log(colors.dim('━'.repeat(60)));
+        console.log(colors.warning('\nThis conversation is archived and needs to be restored'));
+        console.log(colors.dim('to .claude/projects/ before resuming.\n'));
+        console.log(colors.primary('What will happen:'));
+        console.log(colors.dim('  1. Copy JSONL to active projects directory'));
+        console.log(colors.dim('  2. Enrich with metadata (cwd, version, gitBranch)'));
+        console.log(colors.dim('  3. Make session resumable\n'));
+
+        const { confirmRestore } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'confirmRestore',
+          message: 'Restore this session to make it resumable?',
+          default: true
+        }]);
+
+        if (!confirmRestore) {
+          await showConversationActions(conversation);
+          return;
+        }
+
+        const restoreSpinner = ora('Restoring session...').start();
+
+        try {
+          const { SessionRestorer } = await import('./migration/restore-archived-session.js');
+          const restorer = new SessionRestorer({ logger: { info: () => {}, warn: () => {}, error: (msg) => restoreSpinner.fail(msg), debug: () => {} } });
+
+          const result = await restorer.restoreSession(conversationPath);
+
+          if (!result.success) {
+            restoreSpinner.fail('Failed to restore session');
+            console.log(colors.error(`\n❌ Error: ${result.error}\n`));
+            await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
+            await showConversationActions(conversation);
+            return;
+          }
+
+          restoreSpinner.succeed('Session restored to active projects!');
+          console.log(colors.dim(`\n  Location: ${result.outputPath}`));
+          console.log(colors.dim(`  Enriched: ${result.enrichedFields.join(', ')}\n`));
+
+        } catch (error) {
+          restoreSpinner.fail('Restoration failed');
+          console.log(colors.error(`\n❌ Error: ${error.message}\n`));
+          await inquirer.prompt([{ type: 'input', name: 'continue', message: 'Press Enter...' }]);
+          await showConversationActions(conversation);
+          return;
+        }
+      }
+
+      // Show resume command (for both active and newly-restored sessions)
       console.log(colors.info('\n🔄 Resume Claude Code Session\n'));
       console.log(colors.dim('━'.repeat(60)));
       console.log(colors.primary('\nProject:'));
