@@ -25,35 +25,21 @@ describe('Repository Filter Integration (Real Data)', () => {
     exportDir = join(testDir, 'exports');
     await mkdir(exportDir, { recursive: true });
 
-    // Create mock markdown exports with realistic folder-based project names
+    // Create mock JSONL exports with project name in filename
+    // The system will extract project from the filename: projectname_uuid.jsonl
     const conversations = [
       {
-        filename: 'my-api-project_abc123_2025-10-01.md',
-        content: `# Claude Code Conversation
-Project: -Users-user-my-api-project
-Session ID: abc123
-Date: 2025-10-01
-
-## 👤 User
-How do I implement error handling?
-
-## 🤖 Assistant
-Here's how to implement error handling...
-`
+        // Filename format matches export-manager output: projectname_uuid.jsonl
+        filename: '-Users-user-my-api-project_11111111-1111-1111-1111-111111111111.jsonl',
+        content: `{"type":"summary","summary":"Error Handling Implementation","leafUuid":"11111111-1111-1111-1111-111111111111"}
+{"type":"user","message":{"role":"user","content":"How do I implement error handling?"},"timestamp":"2025-10-01T10:00:00.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-user-1"}
+{"type":"assistant","message":{"role":"assistant","content":"Here's how to implement error handling..."},"timestamp":"2025-10-01T10:00:01.000Z","sessionId":"11111111-1111-1111-1111-111111111111","uuid":"msg-asst-1"}`
       },
       {
-        filename: 'web-app_def456_2025-10-01.md',
-        content: `# Claude Code Conversation
-Project: -Users-user-web-app
-Session ID: def456
-Date: 2025-10-01
-
-## 👤 User
-Fix the CSS layout
-
-## 🤖 Assistant
-Let me help you fix that...
-`
+        filename: '-Users-user-web-app_22222222-2222-2222-2222-222222222222.jsonl',
+        content: `{"type":"summary","summary":"CSS Layout Fix","leafUuid":"22222222-2222-2222-2222-222222222222"}
+{"type":"user","message":{"role":"user","content":"Fix the CSS layout"},"timestamp":"2025-10-01T11:00:00.000Z","sessionId":"22222222-2222-2222-2222-222222222222","uuid":"msg-user-2"}
+{"type":"assistant","message":{"role":"assistant","content":"Let me help you fix that..."},"timestamp":"2025-10-01T11:00:01.000Z","sessionId":"22222222-2222-2222-2222-222222222222","uuid":"msg-asst-2"}`
       }
     ];
 
@@ -68,8 +54,38 @@ Let me help you fix that...
       indexPath: join(testDir, 'search-index-v2.json')
     });
 
-    // Build index (this applies getDisplayName() to clean the folder names)
-    await engine.buildIndex();
+    // Build index by providing processed conversations with project names set
+    // This simulates how IndexBuilder would prepare conversations
+    const processedConversations = [
+      {
+        id: 'conv_1',
+        project: '-Users-user-my-api-project',
+        fullText: 'How do I implement error handling? Here\'s how to implement error handling...',
+        preview: 'How do I implement error handling?',
+        modified: '2025-10-01T10:00:00.000Z',
+        wordCount: 50,
+        messageCount: 2,
+        exportedFile: join(exportDir, conversations[0].filename),
+        originalPath: join(exportDir, conversations[0].filename),
+        extractedKeywords: [],
+        toolsUsed: []
+      },
+      {
+        id: 'conv_2',
+        project: '-Users-user-web-app',
+        fullText: 'Fix the CSS layout Let me help you fix that...',
+        preview: 'Fix the CSS layout',
+        modified: '2025-10-01T11:00:00.000Z',
+        wordCount: 40,
+        messageCount: 2,
+        exportedFile: join(exportDir, conversations[1].filename),
+        originalPath: join(exportDir, conversations[1].filename),
+        extractedKeywords: [],
+        toolsUsed: []
+      }
+    ];
+
+    await engine.buildIndex(processedConversations);
   });
 
   afterEach(async () => {
