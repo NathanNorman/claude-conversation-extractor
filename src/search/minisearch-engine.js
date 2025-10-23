@@ -642,8 +642,17 @@ export class MiniSearchEngine {
           const sessionIdMatch = file.filename.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
           const sessionId = sessionIdMatch ? sessionIdMatch[1] : (conversation.sessionId || conversationIndex.toString());
 
-          // Use clean display name for project
-          const rawProject = conversation.project || _project;
+          // Extract project name from filename (format: projectname_session-id.jsonl)
+          // Split on session ID to get project name part
+          let projectFromFilename = file.filename;
+          if (sessionIdMatch) {
+            projectFromFilename = file.filename.split(sessionIdMatch[1])[0].replace(/_+$/, ''); // Remove trailing underscores
+          } else {
+            projectFromFilename = file.filename.replace('.jsonl', '');
+          }
+
+          // Use project from filename first, fallback to parsed or directory
+          const rawProject = projectFromFilename || conversation.project || _project;
           const displayProject = this.getDisplayName(rawProject);
 
           // Use parsed date if it exists and looks valid, otherwise use file mtime
@@ -1583,7 +1592,15 @@ export class MiniSearchEngine {
         }
         processedSessionIds.add(conversation.sessionId);
 
-        const rawProject = conversation.project || 'Unknown';
+        // Extract project name from filename (format: projectname_session-id.jsonl)
+        let projectFromFilename = file.name || basename(file.path);
+        if (conversation.sessionId) {
+          projectFromFilename = projectFromFilename.split(conversation.sessionId)[0].replace(/_+$/, '');
+        } else {
+          projectFromFilename = projectFromFilename.replace('.jsonl', '');
+        }
+
+        const rawProject = projectFromFilename || conversation.project || 'Unknown';
         const displayProject = this.getDisplayName(rawProject);
 
         // Use parsed date if it has time component (full ISO), otherwise use file mtime
