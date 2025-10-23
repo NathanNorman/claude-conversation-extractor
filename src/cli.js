@@ -2113,11 +2113,12 @@ Read the entire file to understand what we discussed before."
       await inquirer.prompt([{
         type: 'input',
         name: 'continue',
-        message: 'Press Enter to return to menu...',
+        message: 'Press Enter to exit and run the launcher...',
         prefix: ''
       }]);
 
-      return;
+      console.log(colors.dim('\nReady to paste! 👋\n'));
+      process.exit(0);
     } else if (action === 'copy') {
       const success = await copyToClipboard(contextPath);
       if (success) {
@@ -2230,11 +2231,12 @@ async function showConversationActions(conversation) {
       await inquirer.prompt([{
         type: 'input',
         name: 'continue',
-        message: 'Press Enter to return to menu...',
+        message: 'Press Enter to exit and paste the command...',
         prefix: ''
       }]);
 
-      await showConversationActions(conversation);
+      console.log(colors.dim('\nReady to paste! 👋\n'));
+      process.exit(0);
     }
     break;
 
