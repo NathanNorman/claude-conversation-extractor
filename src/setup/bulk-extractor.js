@@ -69,7 +69,9 @@ class BulkExtractor {
           let projectName = conversation.project.replace(/[^a-zA-Z0-9-_]/g, '_');
           projectName = projectName.replace(/^-?Users-[^-]+-[^-]+-/, '').replace(/^-/, '') || 'home';
           const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
-          const fileName = `${projectName}_${sessionId}.md`;
+          const format = this.currentFormat || 'jsonl';
+          const extension = format === 'jsonl' ? '.jsonl' : format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
+          const fileName = `${projectName}_${sessionId}${extension}`;
           const filePath = join(exportDir, fileName);
           
           const fileStat = await stat(filePath);
@@ -329,8 +331,8 @@ class BulkExtractor {
     const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
 
     // Get file extension based on format
-    const format = this.currentFormat || 'markdown';
-    const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
+    const format = this.currentFormat || 'jsonl';
+    const extension = format === 'jsonl' ? '.jsonl' : format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
     const fileName = `${projectName}_${sessionId}${extension}`;
     const filePath = join(exportDir, fileName);
 
@@ -342,17 +344,23 @@ class BulkExtractor {
     // Note: File existence is checked by caller (extractAllConversations)
     // If we're here, caller has determined this file needs to be exported/updated
 
-    // Format content based on specified format
-    const conversationData = {
-      project: conversation.project,
-      messages,
-      date: timestamp
-    };
-    
-    const formattedContent = this.formatConversation(conversationData, format);
-    
-    // Write the file
-    await writeFile(filePath, formattedContent);
+    // For JSONL format, copy the file directly (preserves all metadata)
+    if (format === 'jsonl') {
+      const { copyFile } = await import('fs/promises');
+      await copyFile(conversation.path, filePath);
+    } else {
+      // Format content for other formats (markdown, json, html)
+      const conversationData = {
+        project: conversation.project,
+        messages,
+        date: timestamp
+      };
+
+      const formattedContent = this.formatConversation(conversationData, format);
+
+      // Write the file
+      await writeFile(filePath, formattedContent);
+    }
 
     // Set file mtime to match source conversation to prevent race conditions
     // This ensures exports are marked with the JSONL's timestamp, not "now"
@@ -430,8 +438,8 @@ class BulkExtractor {
     const sessionId = conversation.file ? conversation.file.replace('.jsonl', '') : 'unknown';
 
     // Check for the specific format we're currently extracting
-    const format = this.currentFormat || 'markdown';
-    const extension = format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
+    const format = this.currentFormat || 'jsonl';
+    const extension = format === 'jsonl' ? '.jsonl' : format === 'json' ? '.json' : format === 'html' ? '.html' : '.md';
     const fileName = `${projectName}_${sessionId}${extension}`;
     const filePath = join(exportDir, fileName);
 
