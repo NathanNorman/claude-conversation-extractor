@@ -284,9 +284,28 @@ export class MiniSearchEngine {
     const content = await readFile(jsonlPath, 'utf-8');
     const lines = content.trim().split('\n').filter(line => line.trim());
 
+    // Extract session ID from filename for agent conversations
+    // Agent filenames: project_agent-abc123.jsonl
+    // Main filenames: project_session-id.jsonl
+    const filename = basename(jsonlPath);
+    let sessionIdFromFilename = null;
+    if (filename.includes('_agent-')) {
+      // For agent files, use the agent ID as the session ID to avoid duplicates
+      const match = filename.match(/_agent-([^.]+)\.jsonl$/);
+      if (match) {
+        sessionIdFromFilename = `agent-${match[1]}`;
+      }
+    } else {
+      // For main session files, extract session ID from filename
+      const match = filename.match(/_([^_]+)\.jsonl$/);
+      if (match) {
+        sessionIdFromFilename = match[1];
+      }
+    }
+
     const conversation = {
       project: null,
-      sessionId: null,
+      sessionId: sessionIdFromFilename, // Use filename-based ID as primary
       date: null,
       modified: null,
       messages: [],
@@ -308,7 +327,7 @@ export class MiniSearchEngine {
       try {
         const data = JSON.parse(line);
 
-        // Extract session ID from first message with it
+        // Only use sessionId from JSONL if we couldn't extract from filename
         if (!conversation.sessionId && data.sessionId) {
           conversation.sessionId = data.sessionId;
         }
@@ -663,8 +682,12 @@ export class MiniSearchEngine {
           );
           const modifiedDate = hasTimeComponent ? conversation.modified : (file.mtime ? file.mtime.toISOString() : new Date().toISOString());
 
+          // Use filename (without extension) as document ID to handle duplicates
+          const documentId = file.filename.replace('.jsonl', '').replace('.md', '');
+
           const document = {
-            id: `${_project}_${sessionId}`,
+            id: documentId,  // Use unique filename-based ID
+            sessionId: sessionId,  // Keep session ID for reference
             content: conversation.fullText.trim(),
             project: displayProject,
             keywords: '',
@@ -1607,8 +1630,13 @@ export class MiniSearchEngine {
         const hasTimeComponent = conversation.modified && conversation.modified.includes('T');
         const modifiedDate = hasTimeComponent ? conversation.modified : (file.mtime ? file.mtime.toISOString() : new Date().toISOString());
 
+        // Use filename (without extension) as document ID to handle duplicates
+        // This ensures that files with same session ID but different filenames are indexed separately
+        const documentId = file.name.replace('.jsonl', '').replace('.md', '');
+
         const document = {
-          id: conversation.sessionId,
+          id: documentId,  // Use unique filename-based ID instead of session ID
+          sessionId: conversation.sessionId,  // Keep session ID for reference
           content: conversation.fullText,
           project: displayProject,
           keywords: '',

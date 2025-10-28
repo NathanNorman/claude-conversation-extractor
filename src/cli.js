@@ -2537,43 +2537,62 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
 
       // Clear screen and show explanation
       console.clear();
-      console.log('\n' + colors.info('📋 Background Export Service'));
+      console.log('\n' + colors.info('📋 Background Services (Export + Index)'));
       console.log(colors.dim('━'.repeat(60)));
-      console.log(colors.primary('\nWhat does it do?'));
-      console.log('  Automatically exports active conversations to markdown');
-      console.log('  every 60 seconds (only processes changed files).');
+      console.log(colors.primary('\nTwo-Job Architecture:'));
+      console.log('  1️⃣  Export Service (every 60s) - Fast JSONL export');
+      console.log('  2️⃣  Index Updater (every hour) - Search index updates');
+      console.log(colors.primary('\nWhy separate jobs?'));
+      console.log('  • Export is fast (~50-100ms) without index updates');
+      console.log('  • Index updates take ~15s but run less frequently');
+      console.log('  • No overlap, no blocking, optimal performance');
       console.log(colors.primary('\nHow does it work?'));
-      console.log('  • Runs in background via macOS launchd service');
-      console.log('  • Checks for conversations modified in last 2 minutes');
-      console.log('  • Incrementally updates search index');
-      console.log('  • Skips conversations already exported');
+      console.log('  • Runs via macOS launchd services');
+      console.log('  • Export: Checks conversations modified in last 2 min');
+      console.log('  • Index: Updates search with new/modified conversations');
+      console.log('  • Both skip already-processed files');
       console.log(colors.primary('\nPerformance:'));
-      console.log('  • No active conversations: ~50-100ms (just checks files)');
-      console.log('  • 1-2 active conversations: ~300-500ms per run');
-      console.log('  • Memory usage: ~2.5MB');
+      console.log('  • Export: 50-100ms per run (was 100+ seconds before!)');
+      console.log('  • Index: ~15s every hour');
+      console.log('  • Memory: <5MB combined');
       console.log(colors.primary('\nLogs:'));
-      console.log('  • Timing: ~/.claude/claude_conversations/logs/background-export-timing.log');
-      console.log('  • Stats: ~/.claude/claude_conversations/logs/background-export-stats.log');
+      console.log('  • Export: ~/.claude/claude_conversations/logs/background-export-*.log');
+      console.log('  • Index: ~/.claude/claude_conversations/logs/index-update-*.log');
       console.log(colors.dim('\n' + '━'.repeat(60)));
 
       // Get current status
       const serviceStatus = await serviceManager.getServiceStatus();
 
       if (choice === 'manage_background_service' && serviceStatus.installed) {
-        // Show management menu
-        console.log('\n' + colors.info('⚙️  Service Status:'));
-        console.log(`  Installed: ${colors.success('✅')}`);
-        console.log(`  Running: ${serviceStatus.running ? colors.success('✅') : colors.error('❌')}`);
+        // Show management menu with both services
+        console.log('\n' + colors.info('⚙️  Background Services Status:\n'));
 
-        // Get recent stats
+        // Export Service
+        console.log(colors.primary('📤 Export Service (every 60s):'));
+        console.log(`  Installed: ${serviceStatus.export.installed ? colors.success('✅') : colors.error('❌')}`);
+        console.log(`  Running: ${serviceStatus.export.running ? colors.success('✅') : colors.error('❌')}`);
+
+        // Index Service
+        console.log('\n' + colors.primary('🔍 Index Updater (every 15min):'));
+        console.log(`  Installed: ${serviceStatus.index.installed ? colors.success('✅') : colors.error('❌')}`);
+        console.log(`  Running: ${serviceStatus.index.running ? colors.success('✅') : colors.error('❌')}`);
+
+        // Get recent stats for both services
         const recentStats = await serviceManager.getRecentStats();
-        if (recentStats.stats) {
-          const s = recentStats.stats;
-          console.log('\n' + colors.info('📊 Last Run:'));
+
+        if (recentStats.export.stats) {
+          const s = recentStats.export.stats;
+          console.log('\n' + colors.info('📊 Export Service - Last Run:'));
           console.log(`  Time: ${s.lastRun || 'N/A'}`);
           console.log(`  Duration: ${s.totalTime || 'N/A'}`);
-          console.log(`  Active files: ${s.activeFiles}`);
-          console.log(`  Exported: ${s.exported}, Skipped: ${s.skipped}, Errors: ${s.errors}`);
+          console.log(`  Active files: ${s.activeFiles}, Exported: ${s.exported}, Skipped: ${s.skipped}, Errors: ${s.errors}`);
+        }
+
+        if (recentStats.index.stats) {
+          const s = recentStats.index.stats;
+          console.log('\n' + colors.info('📊 Index Updater - Last Run:'));
+          console.log(`  Time: ${s.lastRun || 'N/A'}`);
+          console.log(`  Duration: ${s.totalTime || 'N/A'}`);
         }
 
         const { manageAction } = await inquirer.prompt([{
@@ -2594,11 +2613,18 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
         }
 
         if (manageAction === 'view_logs') {
-          console.log('\n' + colors.info('📋 Log Files:'));
-          console.log(`  Timing: ${serviceStatus.logPaths.timing}`);
-          console.log(`  Stats: ${serviceStatus.logPaths.stats}`);
-          console.log(`  Stdout: ${serviceStatus.logPaths.stdout}`);
-          console.log(`  Stderr: ${serviceStatus.logPaths.stderr}`);
+          console.log('\n' + colors.info('📋 Export Service Logs:'));
+          console.log(`  Timing: ${serviceStatus.export.logPaths.timing}`);
+          console.log(`  Stats: ${serviceStatus.export.logPaths.stats}`);
+          console.log(`  Stdout: ${serviceStatus.export.logPaths.stdout}`);
+          console.log(`  Stderr: ${serviceStatus.export.logPaths.stderr}`);
+
+          console.log('\n' + colors.info('📋 Index Updater Logs:'));
+          console.log(`  Timing: ${serviceStatus.index.logPaths.timing}`);
+          console.log(`  Stats: ${serviceStatus.index.logPaths.stats}`);
+          console.log(`  Stdout: ${serviceStatus.index.logPaths.stdout}`);
+          console.log(`  Stderr: ${serviceStatus.index.logPaths.stderr}`);
+
           console.log('\n' + colors.dim('View with: tail -f <path>'));
           console.log(colors.dim('Press Enter to continue...'));
           await inquirer.prompt([{ type: 'input', name: 'continue', message: '' }]);
@@ -2607,7 +2633,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
         }
 
         if (manageAction === 'reinstall') {
-          const spinner = ora('Reinstalling background export service...').start();
+          const spinner = ora('Reinstalling both background services...').start();
           await serviceManager.uninstallService();
           const result = await serviceManager.installService();
           if (result.success) {
@@ -2625,7 +2651,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
           const { confirmUninstall } = await inquirer.prompt([{
             type: 'confirm',
             name: 'confirmUninstall',
-            message: 'Are you sure you want to uninstall the background export service?',
+            message: 'Are you sure you want to uninstall both background services?',
             default: false
           }]);
 
@@ -2634,7 +2660,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
             continue;
           }
 
-          const spinner = ora('Uninstalling background export service...').start();
+          const spinner = ora('Uninstalling both background services...').start();
           const result = await serviceManager.uninstallService();
           if (result.success) {
             spinner.succeed(colors.success(result.message));
@@ -2647,11 +2673,15 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
           continue;
         }
       } else {
-        // Install service
+        // Install services
+        console.log('\n' + colors.info('📦 Installing Background Services:'));
+        console.log('  • Export Service (every 60s) - Fast JSONL export');
+        console.log('  • Index Updater (every 15min) - Search index updates\n');
+
         const { confirmInstall } = await inquirer.prompt([{
           type: 'confirm',
           name: 'confirmInstall',
-          message: 'Install background export service?',
+          message: 'Install both background services?',
           default: true
         }]);
 
@@ -2660,7 +2690,7 @@ async function showSetupMenuWithLoop(setupManager, initialStatus) {
           continue;
         }
 
-        const spinner = ora('Installing background export service...').start();
+        const spinner = ora('Installing both background services...').start();
         const result = await serviceManager.installService();
         if (result.success) {
           spinner.succeed(colors.success(result.message));

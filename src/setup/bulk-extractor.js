@@ -157,20 +157,11 @@ class BulkExtractor {
       console.log(colors.info(`   Processed: ${this.processed}/${conversations.length} conversations`));
       console.log(colors.info(`   Duration: ${duration}s`));
       
-      // Show deleted conversations count if any
-      if (this.deletedCount > 0) {
-        console.log(colors.success(`   🗑️  Deleted: ${this.deletedCount} empty conversations`));
-      }
-      
       // Separate empty conversations from real errors
       const emptyConversations = this.errors.filter(e => e.error.includes('No messages found'));
       const realErrors = this.errors.filter(e => !e.error.includes('No messages found'));
-      
-      // Only show skipped empty conversations that weren't deleted
-      const skippedEmptyCount = emptyConversations.length - this.deletedCount;
-      if (skippedEmptyCount > 0) {
-        console.log(colors.warning(`   ⚠️  Skipped: ${skippedEmptyCount} empty conversations (kept)`));
-      }
+
+      // Don't show anything about empty conversations - they're cleaned up silently
       
       if (realErrors.length > 0) {
         console.log(colors.error(`   ❌ Errors: ${realErrors.length}`));

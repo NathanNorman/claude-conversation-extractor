@@ -158,15 +158,15 @@ export async function showSetupMenu(status) {
   // Background service management option
   if (status.backgroundServiceInstalled) {
     choices.push({
-      name: `⚙️  ${colors.warning('Manage Background Export Service')} ${colors.dim('(running every 60s)')}`,
+      name: `⚙️  ${colors.warning('Manage Background Services')} ${colors.dim('(export every 60s + index hourly)')}`,
       value: 'manage_background_service',
-      short: 'Background Service'
+      short: 'Background Services'
     });
   } else {
     choices.push({
-      name: `⚙️  ${colors.success('Install Background Export Service')} ${colors.dim('(auto-export every minute)')}`,
+      name: `⚙️  ${colors.success('Install Background Services')} ${colors.dim('(auto-export + search indexing)')}`,
       value: 'install_background_service',
-      short: 'Install Background Service'
+      short: 'Install Background Services'
     });
   }
 

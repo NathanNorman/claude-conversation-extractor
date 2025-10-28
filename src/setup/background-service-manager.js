@@ -1,8 +1,9 @@
 /**
- * Background Service Manager - Manages launchd background export service
+ * Background Service Manager - Manages launchd background services
  *
- * Handles installation, uninstallation, and status checking of the
- * background export service that runs every minute.
+ * Handles installation, uninstallation, and status checking of two services:
+ * 1. Export service (every 60s) - Fast JSONL export
+ * 2. Index updater (every 15min) - Search index updates
  */
 
 import { exec } from 'child_process';
@@ -14,28 +15,45 @@ const execAsync = promisify(exec);
 
 export class BackgroundServiceManager {
   constructor(options = {}) {
-    this.plistName = 'com.claude.conversation-exporter';
-    this.plistPath = join(homedir(), 'Library', 'LaunchAgents', `${this.plistName}.plist`);
     this.projectRoot = options.projectRoot || process.cwd();
-    this.exportScript = join(this.projectRoot, 'scripts', 'background-export.sh');
     this.logger = options.logger || console;
+
+    // Export service (every 60s)
+    this.exportService = {
+      name: 'com.claude.conversation-exporter',
+      plistPath: join(homedir(), 'Library', 'LaunchAgents', 'com.claude.conversation-exporter.plist'),
+      scriptPath: join(this.projectRoot, 'scripts', 'background-export.sh'),
+      interval: '60s',
+      description: 'Fast conversation export'
+    };
+
+    // Index updater service (every hour)
+    this.indexService = {
+      name: 'com.claude.index-updater',
+      plistPath: join(homedir(), 'Library', 'LaunchAgents', 'com.claude.index-updater.plist'),
+      scriptPath: join(this.projectRoot, 'scripts', 'update-search-index.sh'),
+      interval: '1 hour',
+      description: 'Search index updates'
+    };
   }
 
   /**
-   * Check if the background service is installed
-   * @returns {Promise<boolean>}
+   * Check if a specific service is installed
+   * @param {object} service - Service config (exportService or indexService)
+   * @returns {boolean}
    */
-  async isServiceInstalled() {
-    return existsSync(this.plistPath);
+  isServiceInstalled(service) {
+    return existsSync(service.plistPath);
   }
 
   /**
-   * Check if the background service is running
+   * Check if a specific service is running
+   * @param {object} service - Service config
    * @returns {Promise<boolean>}
    */
-  async isServiceRunning() {
+  async isServiceRunning(service) {
     try {
-      const { stdout } = await execAsync(`launchctl list | grep ${this.plistName}`);
+      const { stdout } = await execAsync(`launchctl list | grep ${service.name}`);
       return stdout.trim().length > 0;
     } catch (error) {
       // grep returns exit code 1 when no match found
@@ -44,22 +62,19 @@ export class BackgroundServiceManager {
   }
 
   /**
-   * Get service status information
-   * @returns {Promise<{installed: boolean, running: boolean, scriptExists: boolean, logPaths: object}>}
+   * Get status for both services
+   * @returns {Promise<{export: object, index: object}>}
    */
   async getServiceStatus() {
-    const installed = await this.isServiceInstalled();
-    const running = installed ? await this.isServiceRunning() : false;
-    const scriptExists = existsSync(this.exportScript);
-
     const logDir = join(homedir(), '.claude', 'claude_conversations', 'logs');
 
-    return {
-      installed,
-      running,
-      scriptExists,
-      plistPath: this.plistPath,
-      exportScript: this.exportScript,
+    const exportStatus = {
+      installed: this.isServiceInstalled(this.exportService),
+      running: false,
+      scriptExists: existsSync(this.exportService.scriptPath),
+      name: 'Export Service',
+      description: this.exportService.description,
+      interval: this.exportService.interval,
       logPaths: {
         timing: join(logDir, 'background-export-timing.log'),
         stats: join(logDir, 'background-export-stats.log'),
@@ -67,113 +82,293 @@ export class BackgroundServiceManager {
         stderr: join(logDir, 'background-export-stderr.log')
       }
     };
+
+    const indexStatus = {
+      installed: this.isServiceInstalled(this.indexService),
+      running: false,
+      scriptExists: existsSync(this.indexService.scriptPath),
+      name: 'Index Updater',
+      description: this.indexService.description,
+      interval: this.indexService.interval,
+      logPaths: {
+        timing: join(logDir, 'index-update-timing.log'),
+        stats: join(logDir, 'index-update-stats.log'),
+        stdout: join(logDir, 'index-update-stdout.log'),
+        stderr: join(logDir, 'index-update-stderr.log')
+      }
+    };
+
+    // Check running status if installed
+    if (exportStatus.installed) {
+      exportStatus.running = await this.isServiceRunning(this.exportService);
+    }
+    if (indexStatus.installed) {
+      indexStatus.running = await this.isServiceRunning(this.indexService);
+    }
+
+    return {
+      export: exportStatus,
+      index: indexStatus,
+      // Legacy fields for backward compatibility
+      installed: exportStatus.installed && indexStatus.installed,
+      running: exportStatus.running && indexStatus.running,
+      scriptExists: exportStatus.scriptExists && indexStatus.scriptExists
+    };
   }
 
   /**
-   * Install the background export service
-   * @returns {Promise<{success: boolean, message: string}>}
+   * Install both services (export + index)
+   * @returns {Promise<{success: boolean, message: string, results: object}>}
    */
   async installService() {
+    const results = {
+      export: null,
+      index: null
+    };
+
+    // Install export service
+    results.export = await this.installExportService();
+
+    // Install index service
+    results.index = await this.installIndexService();
+
+    const bothSucceeded = results.export.success && results.index.success;
+    const neitherSucceeded = !results.export.success && !results.index.success;
+
+    if (bothSucceeded) {
+      return {
+        success: true,
+        message: '✅ Both services installed successfully!\n' +
+                 `  • Export Service: Running every ${this.exportService.interval}\n` +
+                 `  • Index Updater: Running every ${this.indexService.interval}`,
+        results
+      };
+    } else if (neitherSucceeded) {
+      return {
+        success: false,
+        message: '❌ Failed to install both services.\n' +
+                 `  • Export: ${results.export.message}\n` +
+                 `  • Index: ${results.index.message}`,
+        results
+      };
+    } else {
+      return {
+        success: false,
+        message: '⚠️  Partial installation (one service failed).\n' +
+                 `  • Export: ${results.export.success ? '✅' : '❌'} ${results.export.message}\n` +
+                 `  • Index: ${results.index.success ? '✅' : '❌'} ${results.index.message}`,
+        results
+      };
+    }
+  }
+
+  /**
+   * Install export service only
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async installExportService() {
     try {
       // Check if script exists
-      if (!existsSync(this.exportScript)) {
+      if (!existsSync(this.exportService.scriptPath)) {
         return {
           success: false,
-          message: `Export script not found: ${this.exportScript}`
+          message: `Script not found: ${this.exportService.scriptPath}`
         };
       }
 
       // Make script executable
-      await execAsync(`chmod +x "${this.exportScript}"`);
+      await execAsync(`chmod +x "${this.exportService.scriptPath}"`);
 
-      // Run the installation script
-      const installScript = join(this.projectRoot, 'scripts', 'install-background-export.sh');
+      // Load the plist
+      await execAsync(`launchctl load "${this.exportService.plistPath}"`);
 
-      if (!existsSync(installScript)) {
-        return {
-          success: false,
-          message: `Installation script not found: ${installScript}`
-        };
-      }
-
-      await execAsync(`chmod +x "${installScript}"`);
-      const { stdout, stderr } = await execAsync(`"${installScript}"`);
-
-      // Check if it actually installed
-      const status = await this.getServiceStatus();
-      if (status.installed && status.running) {
+      // Verify it's running
+      const running = await this.isServiceRunning(this.exportService);
+      if (running) {
         return {
           success: true,
-          message: 'Background export service installed and running! Exports every 60 seconds.',
-          stdout
+          message: `Started (every ${this.exportService.interval})`
         };
       } else {
         return {
           success: false,
-          message: 'Installation script ran but service not active. Check logs.',
-          stdout,
-          stderr
+          message: 'Loaded but not running'
         };
       }
     } catch (error) {
       return {
         success: false,
-        message: `Failed to install service: ${error.message}`,
-        error: error.stderr || error.message
+        message: error.message
       };
     }
   }
 
   /**
-   * Uninstall the background export service
+   * Install index service only
    * @returns {Promise<{success: boolean, message: string}>}
    */
-  async uninstallService() {
+  async installIndexService() {
     try {
-      // Run the uninstallation script
-      const uninstallScript = join(this.projectRoot, 'scripts', 'uninstall-background-export.sh');
-
-      if (!existsSync(uninstallScript)) {
+      // Check if script exists
+      if (!existsSync(this.indexService.scriptPath)) {
         return {
           success: false,
-          message: 'Uninstallation script not found: ' + uninstallScript
+          message: `Script not found: ${this.indexService.scriptPath}`
         };
       }
 
-      await execAsync(`chmod +x "${uninstallScript}"`);
-      const { stdout } = await execAsync(`"${uninstallScript}"`);
+      // Make script executable
+      await execAsync(`chmod +x "${this.indexService.scriptPath}"`);
 
-      // Check if it actually uninstalled
-      const status = await this.getServiceStatus();
-      if (!status.installed && !status.running) {
+      // Load the plist
+      await execAsync(`launchctl load "${this.indexService.plistPath}"`);
+
+      // Verify it's running
+      const running = await this.isServiceRunning(this.indexService);
+      if (running) {
         return {
           success: true,
-          message: 'Background export service uninstalled successfully!',
-          stdout
+          message: `Started (every ${this.indexService.interval})`
         };
       } else {
         return {
           success: false,
-          message: 'Uninstallation script ran but service still active.',
-          stdout
+          message: 'Loaded but not running'
         };
       }
     } catch (error) {
       return {
         success: false,
-        message: `Failed to uninstall service: ${error.message}`,
-        error: error.stderr || error.message
+        message: error.message
       };
     }
   }
 
   /**
-   * Get recent service statistics
-   * @returns {Promise<object>}
+   * Uninstall both services
+   * @returns {Promise<{success: boolean, message: string, results: object}>}
+   */
+  async uninstallService() {
+    const results = {
+      export: null,
+      index: null
+    };
+
+    // Uninstall export service
+    results.export = await this.uninstallExportService();
+
+    // Uninstall index service
+    results.index = await this.uninstallIndexService();
+
+    const bothSucceeded = results.export.success && results.index.success;
+    const neitherSucceeded = !results.export.success && !results.index.success;
+
+    if (bothSucceeded) {
+      return {
+        success: true,
+        message: '✅ Both services uninstalled successfully!',
+        results
+      };
+    } else if (neitherSucceeded) {
+      return {
+        success: false,
+        message: '❌ Failed to uninstall both services.\n' +
+                 `  • Export: ${results.export.message}\n` +
+                 `  • Index: ${results.index.message}`,
+        results
+      };
+    } else {
+      return {
+        success: false,
+        message: '⚠️  Partial uninstallation (one service failed).\n' +
+                 `  • Export: ${results.export.success ? '✅' : '❌'} ${results.export.message}\n` +
+                 `  • Index: ${results.index.success ? '✅' : '❌'} ${results.index.message}`,
+        results
+      };
+    }
+  }
+
+  /**
+   * Uninstall export service only
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async uninstallExportService() {
+    try {
+      // Unload the plist
+      await execAsync(`launchctl unload "${this.exportService.plistPath}"`);
+
+      // Verify it's stopped
+      const running = await this.isServiceRunning(this.exportService);
+      if (!running) {
+        return {
+          success: true,
+          message: 'Stopped successfully'
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Unloaded but still running'
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message
+      };
+    }
+  }
+
+  /**
+   * Uninstall index service only
+   * @returns {Promise<{success: boolean, message: string}>}
+   */
+  async uninstallIndexService() {
+    try {
+      // Unload the plist
+      await execAsync(`launchctl unload "${this.indexService.plistPath}"`);
+
+      // Verify it's stopped
+      const running = await this.isServiceRunning(this.indexService);
+      if (!running) {
+        return {
+          success: true,
+          message: 'Stopped successfully'
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Unloaded but still running'
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message
+      };
+    }
+  }
+
+  /**
+   * Get recent service statistics for both services
+   * @returns {Promise<{export: object, index: object}>}
    */
   async getRecentStats() {
     const status = await this.getServiceStatus();
 
+    const exportStats = await this._getExportStats(status.export);
+    const indexStats = await this._getIndexStats(status.index);
+
+    return {
+      export: exportStats,
+      index: indexStats
+    };
+  }
+
+  /**
+   * Get export service stats
+   * @private
+   */
+  async _getExportStats(status) {
     if (!status.installed) {
       return {
         installed: false,
@@ -187,11 +382,10 @@ export class BackgroundServiceManager {
         return {
           installed: true,
           stats: null,
-          message: 'No stats available yet (service may not have run)'
+          message: 'No stats available yet'
         };
       }
 
-      // Parse last run summary from stats log
       const { stdout } = await execAsync(`tail -20 "${statsPath}"`);
       const lines = stdout.split('\n');
 
@@ -204,7 +398,6 @@ export class BackgroundServiceManager {
         errors: 0
       };
 
-      // Parse the summary section
       for (const line of lines) {
         if (line.includes('RUN SUMMARY')) {
           stats.lastRun = line.match(/\[(.*?)\]/)?.[1];
@@ -218,6 +411,57 @@ export class BackgroundServiceManager {
           stats.skipped = parseInt(line.match(/Skipped:\s*(\d+)/)?.[1] || '0');
         } else if (line.includes('Errors:')) {
           stats.errors = parseInt(line.match(/Errors:\s*(\d+)/)?.[1] || '0');
+        }
+      }
+
+      return {
+        installed: true,
+        stats
+      };
+    } catch (error) {
+      return {
+        installed: true,
+        stats: null,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Get index updater stats
+   * @private
+   */
+  async _getIndexStats(status) {
+    if (!status.installed) {
+      return {
+        installed: false,
+        stats: null
+      };
+    }
+
+    try {
+      const statsPath = status.logPaths.stats;
+      if (!existsSync(statsPath)) {
+        return {
+          installed: true,
+          stats: null,
+          message: 'No stats available yet'
+        };
+      }
+
+      const { stdout } = await execAsync(`tail -20 "${statsPath}"`);
+      const lines = stdout.split('\n');
+
+      const stats = {
+        lastRun: null,
+        totalTime: null
+      };
+
+      for (const line of lines) {
+        if (line.includes('UPDATE SUMMARY')) {
+          stats.lastRun = line.match(/\[(.*?)\]/)?.[1];
+        } else if (line.includes('Total time:')) {
+          stats.totalTime = line.match(/(\d+)ms/)?.[1] + 'ms';
         }
       }
 
